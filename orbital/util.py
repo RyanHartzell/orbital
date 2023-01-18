@@ -169,4 +169,4 @@ if __name__=="__main__":
 
     # Optionally, write out the viewer to HTML
     from pathlib import Path
-    save_viewer(viewer, str(Path.cwd() / Path("test.html")))
+    save_viewer(viewer, str(Path.cwd() / Path("../index.html")))
