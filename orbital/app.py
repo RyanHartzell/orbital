@@ -4,6 +4,7 @@ import codecs
 from pathlib import Path
 from loadtle_example import *
 from util import *
+from density import *
 from pathlib import Path
 import httpx
 import xml.etree.ElementTree as ET
@@ -39,6 +40,10 @@ def get_all_active_satellites():
     df = make_gp_df(xml)
     return satdict, df
 
+@st.cache_resource
+def load_all_satellites():
+    return load_satellites()
+
 def make_gp_df(xml):
     d = [[{x.tag:x.text for x in i} for i in s] for s in xml.findall('.//data')]
     d = [{**x, **y} for x,y in d]
@@ -69,6 +74,7 @@ def heatmap(df):
 if __name__=="__main__":
     # Load (and cache) our list of satellite names for multiselect
     satdict, df = get_all_active_satellites()
+    allsats = load_all_satellites()
 
     st.title("Basic CZML Viewer Using Python for Ephem/Trajectory Generation")
     st.write("This viewer allows you to choose a particular (most recent) TLE from Celestrak by name and display them in an embedded CZML document.")
@@ -120,12 +126,55 @@ if __name__=="__main__":
             st.write("*If the viewer disappears or shrinks, reload the page or interact with the select box above.*")
 
     with tabs[1]:
+        animation = st.empty()
+
         # Page 2 - Density stuff
         # Select a particular host satellite (AzEl reference frame should just be RIC I think...)
         # Show density plots in either rectilinear full sky, targeted image space view of targets, or a polar plot view at each time step
         # Should be "scrollable" or animated via a slider or similar functionality to play the animation of density over time
         # Should allow histogram or marginal density plots and vmin vmax settings for contrast (as well as logarithmic scaling)
-        st.empty()
+        
+        # density_columns = st.columns([2,1,1,1])
+        hostname = st.selectbox("Select a host satellite for your space telescope:", satdict.keys())
+        st.markdown("*Note: The density calculator may take a while...")
+        # host = density_columns[0].selectbox("Select a host satellite for your space telescope:", allsats)
+        # density_start = density_columns[1].date_picker("Start [UTC]")
+        # density_stop = density_columns[2].date_picker("Stop [UTC]")
+        # density_step = density_columns[3].number_input("Step [minutes]")
+
+        prog = st.progress(0.0, "Running density pipeline...")
+
+        # Select a host and make targets a view of the rest of the stuff in that list of satellites
+        hostind = np.where(df["OBJECT_NAME"]==hostname)
+        host = allsats[hostind]
+
+        # Get times
+        ts = load.timescale()
+        times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly, currently this is default
+        prog.progress(.2, "Calculating apparent RA/Dec of targets...")
+
+        # Calculate apparent ra, dec, ranges relative to host state at each time t
+        obs = reformat_radecrange(calculate_apparent_radecrange(host, [s for s in allsats if host != s], times))
+
+        prog.progress(.4, "Generating BallTree representations...")
+
+        # Build all ball trees
+        bts = construct_ball_trees(obs)
+
+        prog.progress(.6, "Building density maps...")
+
+        # Build all density maps
+        kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+
+        prog.progress(.8, "Almost done! ...")
+
+        # Make animation of density maps!
+        doc = animate_heatmaps(kde_maps, times, False)
+        animation.html(doc)
+
+        prog.progress(1.0, "Done! :party:")
+
+
 
     with tabs[2]:
         # Page 3 - Allows data exploration (optionally tSNE?)

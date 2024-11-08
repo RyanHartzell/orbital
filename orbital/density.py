@@ -3,16 +3,19 @@ Calculate AzEl from ephemeris data, then density
 """
 import httpx
 import json
+import numpy as np
 from skyfield.api import load, EarthSatellite
 from sklearn.neighbors import BallTree
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
-class Frame:
-    def __init__(self) -> None:
-        pass
+# class Frame:
+#     def __init__(self) -> None:
+#         pass
 
-class PerspectiveCamera:
-    def __init__(self) -> None:
-        pass
+# class PerspectiveCamera:
+#     def __init__(self) -> None:
+#         pass
 
 # Skyfield related stuff which we'll use as a basis for the new app (no more poliastro!!!)
 def load_satellites():
@@ -41,19 +44,80 @@ def calculate_apparent_radecrange(host, targets, times):
 
 # Return contiguous numpy array of values for ra, dec, and ranges separately
 def reformat_radecrange(apparent_radecrange):
-    pass
+    ras = []
+    decs = []
+    ranges = []
+    for x in apparent_radecrange:
+        ras.append(x[0].radians)
+        decs.append(x[1].radians)
+        ranges.append(x[2].km)
+
+    # targets are rows, time is columns, ra/dec/range is along channels
+    return np.dstack([ras, decs, ranges])
 
 # Construct BallTree for each timestep
 # Requires 'transposing' the results from the calculate_apparent_radecrange function so we have all ra/dec for all targets grouped per 
-def construct_ball_tree():
-    pass
+def construct_ball_trees(data):
+    return [BallTree(np.c_[data[:,t,1], data[:,t,0]], metric='haversine') for t in range(data.shape[1])]
 
-def construct_kde_map():
-    pass
+def construct_kde_map(bt, scale=1, afov=5.5, **kwargs):
+    RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,360*scale+1), np.linspace(-np.pi/2, np.pi/2, 180*scale+1))
+    return bt.kernel_density(np.c_[DEC.flat, RA.flat], np.deg2rad(afov/2), **kwargs).reshape(RA.shape)
 
 # afov is full size of largest dimension of aperture in degrees
-def construct_fov_density_map(afov=5.5):
+def construct_fov_density_map(afov=5.5, scale=(4,4)):
     pass
 
+# Times should be skyfield or astropy times with a utc_iso() method for formatting
+def animate_heatmaps(heatmaps, times, to_disk=False):
+    print("Heatmaps shape: ", heatmaps.shape)
+    fig, ax = plt.subplots()
+    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso()}")
+    ax.set_xlabel(r"$\alpha$ (Right Ascension) [rad]")
+    ax.set_xlabel(r"$\delta$ (Declination) [rad]")
+
+    hm = ax.imshow(heatmaps[:,:,0], cmap="inferno")
+    # hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
+
+    # Define the animation function
+    def update(frame):
+        ax.cla()
+        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso()}")
+        ax.set_xlabel(r"$\alpha$ (Right Ascension) [rad]")
+        ax.set_xlabel(r"$\delta$ (Declination) [rad]")
+        hm = ax.imshow(heatmaps[:,:,frame], cmap="inferno")
+        # hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
+        return hm
+
+    # Create the animation object
+    ani = FuncAnimation(fig, update, frames=list(range(1,len(times)))) #, interval=20, blit=True)
+    doc = ani.to_jshtml()
+    if to_disk:
+        with open('ani.html', 'w') as f:
+            f.write(doc)
+    return doc
+
 if __name__=="__main__":
-    pass
+    # Basic flow
+    sats = load_satellites()
+
+    # Select a host and make targets a view of the rest of the stuff in that list of satellites
+    host = sats[0]
+    targets = sats[1:]
+
+    # Get times
+    ts = load.timescale()
+    times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly
+
+    # Calculate apparent ra, dec, ranges relative to host state at each time t
+    obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
+
+    # Build all ball trees
+    bts = construct_ball_trees(obs)
+
+    # Build all density maps
+    kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+
+    # Make animation of density maps!
+    doc = animate_heatmaps(kde_maps, times, True)
+    print(len(doc))
