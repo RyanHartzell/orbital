@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from collections import OrderedDict
 
 custom_style = {'axes.labelcolor': 'lightblue',
                 'xtick.color': 'lightblue',
@@ -31,7 +32,10 @@ def get_all_active_satellites():
     r = httpx.get("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=xml")    
     xml = ET.fromstring(r.text)
 
-    satdict = {k.text:Satrec() for k in xml.findall('.//OBJECT_NAME')}
+    satdict = OrderedDict()
+    for k in xml.findall('.//OBJECT_NAME'):
+        satdict[k.text] = Satrec()
+
     active_sat_xml = list(omm.parse_xml(io.StringIO(r.text))) # all segments in order (I hope...)    
     for k,seg in zip(satdict.keys(), active_sat_xml):
         omm.initialize(satdict[k], seg)
@@ -126,8 +130,6 @@ if __name__=="__main__":
             st.write("*If the viewer disappears or shrinks, reload the page or interact with the select box above.*")
 
     with tabs[1]:
-        animation = st.empty()
-
         # Page 2 - Density stuff
         # Select a particular host satellite (AzEl reference frame should just be RIC I think...)
         # Show density plots in either rectilinear full sky, targeted image space view of targets, or a polar plot view at each time step
@@ -135,46 +137,46 @@ if __name__=="__main__":
         # Should allow histogram or marginal density plots and vmin vmax settings for contrast (as well as logarithmic scaling)
         
         # density_columns = st.columns([2,1,1,1])
-        hostname = st.selectbox("Select a host satellite for your space telescope:", satdict.keys())
-        st.markdown("*Note: The density calculator may take a while...")
-        # host = density_columns[0].selectbox("Select a host satellite for your space telescope:", allsats)
-        # density_start = density_columns[1].date_picker("Start [UTC]")
-        # density_stop = density_columns[2].date_picker("Stop [UTC]")
-        # density_step = density_columns[3].number_input("Step [minutes]")
+        density_cols = st.columns([2,1])
+        hostname = density_cols[0].selectbox("Select a host satellite for your space telescope:", satdict.keys())
+        if density_cols[1].button("Run density pipeline"):
 
-        prog = st.progress(0.0, "Running density pipeline...")
+            st.markdown("*Note: The density calculator may take a while...")
+            # host = density_columns[0].selectbox("Select a host satellite for your space telescope:", allsats)
+            # density_start = density_columns[1].date_picker("Start [UTC]")
+            # density_stop = density_columns[2].date_picker("Stop [UTC]")
+            # density_step = density_columns[3].number_input("Step [minutes]")
 
-        # Select a host and make targets a view of the rest of the stuff in that list of satellites
-        hostind = np.where(df["OBJECT_NAME"]==hostname)
-        host = allsats[hostind]
+            prog = st.progress(0.0, "Running density pipeline...")
 
-        # Get times
-        ts = load.timescale()
-        times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly, currently this is default
-        prog.progress(.2, "Calculating apparent RA/Dec of targets...")
+            # Select a host and make targets a view of the rest of the stuff in that list of satellites
+            host = allsats[list(satdict.keys()).index(hostname)]
 
-        # Calculate apparent ra, dec, ranges relative to host state at each time t
-        obs = reformat_radecrange(calculate_apparent_radecrange(host, [s for s in allsats if host != s], times))
+            # Get times
+            ts = load.timescale()
+            times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly, currently this is default
+            prog.progress(.2, "Calculating apparent RA/Dec of targets...")
 
-        prog.progress(.4, "Generating BallTree representations...")
+            # Calculate apparent ra, dec, ranges relative to host state at each time t
+            obs = reformat_radecrange(calculate_apparent_radecrange(host, [s for s in allsats if host != s], times))
 
-        # Build all ball trees
-        bts = construct_ball_trees(obs)
+            prog.progress(.4, "Generating BallTree representations...")
 
-        prog.progress(.6, "Building density maps...")
+            # Build all ball trees
+            bts = construct_ball_trees(obs)
 
-        # Build all density maps
-        kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+            prog.progress(.6, "Building density maps...")
 
-        prog.progress(.8, "Almost done! ...")
+            # Build all density maps
+            kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
 
-        # Make animation of density maps!
-        doc = animate_heatmaps(kde_maps, times, False)
-        animation.html(doc)
+            prog.progress(.8, "Almost done! ...")
 
-        prog.progress(1.0, "Done! :party:")
+            # Make animation of density maps!
+            doc = animate_heatmaps(kde_maps, times, False)
+            components.html(doc, height=600, scrolling=True)
 
-
+            prog.progress(1.0, "Done! :sparkles:")
 
     with tabs[2]:
         # Page 3 - Allows data exploration (optionally tSNE?)
