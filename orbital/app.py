@@ -12,6 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import OrderedDict
+from datetime import timedelta
 
 custom_style = {'axes.labelcolor': 'lightblue',
                 'xtick.color': 'lightblue',
@@ -78,7 +79,9 @@ def heatmap(df):
 if __name__=="__main__":
     # Load (and cache) our list of satellite names for multiselect
     satdict, df = get_all_active_satellites()
+    # print(satdict, df)
     allsats = load_all_satellites()
+    # print(allsats)
 
     st.title("Basic CZML Viewer Using Python for Ephem/Trajectory Generation")
     st.write("This viewer allows you to choose a particular (most recent) TLE from Celestrak by name and display them in an embedded CZML document.")
@@ -139,6 +142,7 @@ if __name__=="__main__":
         # density_columns = st.columns([2,1,1,1])
         density_cols = st.columns([2,1])
         hostname = density_cols[0].selectbox("Select a host satellite for your space telescope:", satdict.keys())
+        # date = st.date_input("Pick a date on which to calculate 24 hours of target density:")
         if density_cols[1].button("Run density pipeline"):
 
             st.markdown("*Note: The density calculator may take a while...")
@@ -150,33 +154,51 @@ if __name__=="__main__":
             prog = st.progress(0.0, "Running density pipeline...")
 
             # Select a host and make targets a view of the rest of the stuff in that list of satellites
-            host = allsats[list(satdict.keys()).index(hostname)]
+            # host = allsats[list(satdict.keys()).index(hostname)]
+            # targets = [s for s in allsats if host != s]
+
+            host = (targets := allsats.copy()).pop(list(satdict.keys()).index(hostname))
 
             # Get times
             ts = load.timescale()
-            times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly, currently this is default
+            # times = ts.utc(date[0], date[1], date[2], 0, range(0,3*60+1,5)) # hourly, currently this is default
+            t0 = ts.now()
+            times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0,3*60+1,5)])) # 5 minute steps over 3 hours
+            
             prog.progress(.2, "Calculating apparent RA/Dec of targets...")
 
             # Calculate apparent ra, dec, ranges relative to host state at each time t
-            obs = reformat_radecrange(calculate_apparent_radecrange(host, [s for s in allsats if host != s], times))
+            obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
 
-            prog.progress(.4, "Generating BallTree representations...")
+            # Check for nans and filter out any row with at least one nan (and report in dictionary? maybe??)
+            # print("SANITY CHECK: OBS SHAPE: ", obs.shape)
+            # obs = obs[np.sum(np.isnan(obs), (1,2)).astype(bool),:,:]
+            # print("SANITY CHECK: OBS SHAPE: ", obs.shape)
 
-            # Build all ball trees
-            bts = construct_ball_trees(obs)
+            if np.any(np.isnan(obs)):
+                prog.progress(1.0, "Abort.")
+                st.write("% NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs))/np.size(obs)*100.)
+                st.write("# NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs)))
+                st.write("Aborting due to NaN values in observation table... :warning:")
+            else:
 
-            prog.progress(.6, "Building density maps...")
+                prog.progress(.4, "Generating BallTree representations...")
 
-            # Build all density maps
-            kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+                # Build all ball trees
+                bts = construct_ball_trees(obs)
 
-            prog.progress(.8, "Almost done! ...")
+                prog.progress(.6, "Building density maps...")
 
-            # Make animation of density maps!
-            doc = animate_heatmaps(kde_maps, times, False)
-            components.html(doc, height=600, scrolling=True)
+                # Build all density maps
+                kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
 
-            prog.progress(1.0, "Done! :sparkles:")
+                prog.progress(.8, "Almost done! ...")
+
+                # Make animation of density maps!
+                doc = animate_heatmaps(kde_maps, times, False)
+                components.html(doc, height=600, scrolling=True)
+
+                prog.progress(1.0, "Done! :sparkles:")
 
     with tabs[2]:
         # Page 3 - Allows data exploration (optionally tSNE?)
