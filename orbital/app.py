@@ -163,7 +163,9 @@ if __name__=="__main__":
             ts = load.timescale()
             # times = ts.utc(date[0], date[1], date[2], 0, range(0,3*60+1,5)) # hourly, currently this is default
             t0 = ts.now()
-            times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0,3*60+1,5)])) # 5 minute steps over 3 hours
+
+            # Should add selectors for time window and step
+            times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in [0,1,2,3]])) #range(0,3*60+1,5)])) # 5 minute steps over 3 hours
             
             prog.progress(.2, "Calculating apparent RA/Dec of targets...")
 

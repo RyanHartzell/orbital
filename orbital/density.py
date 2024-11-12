@@ -8,6 +8,7 @@ from skyfield.api import load, EarthSatellite
 from sklearn.neighbors import BallTree
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import seaborn as sns
 
 # class Frame:
 #     def __init__(self) -> None:
@@ -72,21 +73,25 @@ def construct_fov_density_map(afov=5.5, scale=(4,4)):
 def animate_heatmaps(heatmaps, times, to_disk=False):
     print("Heatmaps shape: ", heatmaps.shape)
     fig, ax = plt.subplots()
-    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso()}")
-    ax.set_xlabel(r"$\alpha$ (Right Ascension) [rad]")
-    ax.set_xlabel(r"$\delta$ (Declination) [rad]")
+    sns.set_style('darkgrid')
+    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso()}", color='black')
+    ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+    ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
 
     hm = ax.imshow(heatmaps[:,:,0], cmap="inferno")
-    # hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
+    ax.set_ylim(-np.pi/2, np.pi/2)
+    hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
 
     # Define the animation function
     def update(frame):
         ax.cla()
-        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso()}")
-        ax.set_xlabel(r"$\alpha$ (Right Ascension) [rad]")
-        ax.set_xlabel(r"$\delta$ (Declination) [rad]")
+        sns.set_style('darkgrid')
+        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso()}", color='black')
+        ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+        ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
         hm = ax.imshow(heatmaps[:,:,frame], cmap="inferno")
-        # hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
+        ax.set_ylim(-np.pi/2, np.pi/2)
+        hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
         return hm
 
     # Create the animation object
