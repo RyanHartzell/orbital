@@ -38,28 +38,58 @@ def calculate_relative_states(host, targets, times):
 
 # This should be simpler than dealing with reference frame of camera and gimbal and whatnot
 # Instead we're just using apparent RA/Dec and range and we can use that to build our density map. It's effectively the same as AzEl without adjusting to RIC basically
-def calculate_apparent_radecrange(host, targets, times):
+def calculate_apparent_radecrange(host, targets, times, mask=None):
     # By default ICRS. Note that to account for light-time we should technically use the observe function.... like satellite.at(t).observe(target).apparent().radec()
     # Will need to call .radians and .km on each of the return elements in order to get numpy arrays
-    return [(t - host).at(times).radec() for t in targets]
+
+    if mask is not None:
+        res = []
+        for i,t in enumerate(times):
+            res.append([(targ - host).at(t).radec() for targ in targets[mask[:,i]]])
+        return res
+    else:
+        return [(t - host).at(times).radec() for t in targets]
 
 # Return contiguous numpy array of values for ra, dec, and ranges separately
-def reformat_radecrange(apparent_radecrange):
-    ras = []
-    decs = []
-    ranges = []
-    for x in apparent_radecrange:
-        ras.append(x[0].radians)
-        decs.append(x[1].radians)
-        ranges.append(x[2].km)
+def reformat_radecrange(apparent_radecrange, ragged=False):
+    if ragged:
+        ras = []
+        decs = []
+        ranges = []
+        for t in apparent_radecrange: # stored by time
+            tra = []
+            tdec = []
+            trng = []
+            for targ in t:
+                tra.append(targ[0].radians)
+                tdec.append(targ[1].radians)
+                trng.append(targ[2].km)
+            ras.append(tra)
+            decs.append(tdec)
+            ranges.append(trng)
 
-    # targets are rows, time is columns, ra/dec/range is along channels
-    return np.dstack([ras, decs, ranges])
+        return (ras, decs, ranges) # This is due to different length sub-vectors
+
+    else:
+        ras = []
+        decs = []
+        ranges = []
+        for x in apparent_radecrange:
+            ras.append(x[0].radians)
+            decs.append(x[1].radians)
+            ranges.append(x[2].km)
+
+        # targets are rows, time is columns, ra/dec/range is along channels
+        return np.dstack([ras, decs, ranges])
 
 # Construct BallTree for each timestep
 # Requires 'transposing' the results from the calculate_apparent_radecrange function so we have all ra/dec for all targets grouped per 
 def construct_ball_trees(data):
     return [BallTree(np.c_[data[:,t,1], data[:,t,0]], metric='haversine') for t in range(data.shape[1])]
+
+# This guy just takes 1d vectors for ra and dec values
+def construct_ball_tree(ras, decs):
+    return BallTree(np.c_[decs, ras], metric='haversine')
 
 def construct_kde_map(bt, scale=1, afov=5.5, **kwargs):
     RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,360*scale+1), np.linspace(-np.pi/2, np.pi/2, 180*scale+1))
@@ -70,7 +100,7 @@ def construct_fov_density_map(afov=5.5, scale=(4,4)):
     pass
 
 # Times should be skyfield or astropy times with a utc_iso() method for formatting
-def animate_heatmaps(heatmaps, times, to_disk=False):
+def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
     print("Heatmaps shape: ", heatmaps.shape)
     fig, ax = plt.subplots()
     sns.set_style('darkgrid')
@@ -98,7 +128,7 @@ def animate_heatmaps(heatmaps, times, to_disk=False):
     ani = FuncAnimation(fig, update, frames=list(range(1,len(times)))) #, interval=20, blit=True)
     doc = ani.to_jshtml()
     if to_disk:
-        with open('ani.html', 'w') as f:
+        with open(filename+'.html', 'w') as f:
             f.write(doc)
     return doc
 
@@ -136,18 +166,16 @@ if __name__=="__main__":
     plt.title("Access Plot (# of observable targets)")
     plt.show()
 
-    # Now we filter targets which are accessible at each time for our density maps (ragged until density computed)
-
-
     # # Calculate apparent ra, dec, ranges relative to host state at each time t
-    # obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
+    obs = reformat_radecrange(calculate_apparent_radecrange(host, np.asarray(targets), times, access), ragged=True)
 
     # # Build all ball trees
     # bts = construct_ball_trees(obs)
+    bts = [construct_ball_tree(obs[0][i], obs[1][i]) for i in range(len(times))]
 
     # # Build all density maps
-    # kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+    kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
 
     # # Make animation of density maps!
-    # doc = animate_heatmaps(kde_maps, times, True)
+    doc = animate_heatmaps(kde_maps, times, True)
     # print(len(doc))

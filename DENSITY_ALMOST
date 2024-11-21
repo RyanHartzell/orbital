@@ -1,0 +1,96 @@
+(venv_orbital) PS C:\Users\rhart\Documents\Projects\orbital\orbital> python 
+Python 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)] on win32
+Type "help", "copyright", "credits" or "license" for more information.
+>>> from density import *
+>>> sats = load_satellites()
+Loaded 10358 satellites
+>>> ts = load.timescale()
+>>> times = ts.utc(2024, 11, 5, 0, range(0, 24, 101))
+>>> times
+<Time tt=[2460619.50080074]>
+>>> len(times)
+1
+>>> times = ts.utc(2024, 11, 5, 0, range(0, 24*60, 1001))
+>>> times
+<Time tt=[2460619.50080074 2460620.19593963]>
+>>> times = ts.utc(2024, 11, 5, 0, range(0, 24*60+1))     
+>>> times
+<Time tt=[2460619.500800741 ... 2460620.500800741] len=1441>
+>>> obs = calculate_apparent_radecrange(sats[0], sats[1:], times)
+>>> obs.shape
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+AttributeError: 'list' object has no attribute 'shape'
+>>> obs = reformat_radecrange(obs)      
+>>> obs.shape
+(10357, 1441, 3)
+>>> obs[:5,:5,0] 
+array([[1.08694597, 1.08141898, 1.07620027, 1.07123172, 1.06646382],
+       [4.56406582, 4.63058852, 4.70272692, 4.78062057, 4.86417257],
+       [3.79220073, 3.72005957, 3.52027338, 2.37378999, 1.21636047],
+       [5.29530607, 5.34840622, 5.40421243, 5.46295029, 5.52482933],
+       [0.39608192, 0.45565016, 0.50839874, 0.55556295, 0.59814446]])
+>>> from sklearn.neighbors import BallTree
+>>> bt = BallTree(obs[:,0,1], obs[:,0,0], metric='haversine') 
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "sklearn\\neighbors\\_binary_tree.pxi", line 893, in sklearn.neighbors._ball_tree.BinaryTree64.__init__
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\sklearn\utils\validation.py", line 1050, in check_array
+    raise ValueError(msg)
+ValueError: Expected 2D array, got 1D array instead:
+array=[-0.50355764 -0.36149654 -0.07662805 ... -0.11894863 -0.57819922
+ -1.14537257].
+Reshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.
+>>> bt = BallTree(obs[:,0,1].T, obs[:,0,0].T, metric='haversine') 
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "sklearn\\neighbors\\_binary_tree.pxi", line 893, in sklearn.neighbors._ball_tree.BinaryTree64.__init__
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\sklearn\utils\validation.py", line 1050, in check_array
+    raise ValueError(msg)
+ValueError: Expected 2D array, got 1D array instead:
+array=[-0.50355764 -0.36149654 -0.07662805 ... -0.11894863 -0.57819922
+ -1.14537257].
+Reshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.
+>>> bt = BallTree(obs[:,0,1].reshape(-1,1), obs[:,0,0].reshape(-1,1), metric='haversine') 
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "sklearn\\neighbors\\_binary_tree.pxi", line 900, in sklearn.neighbors._ball_tree.BinaryTree64.__init__
+ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+>>> obs[:,0,0].reshape(-1,1).shape
+(10357, 1)
+>>> bt = BallTree(np.c_[obs[:,0,1],obs[:,0,0]], metric='haversine')                       
+>>> R,C = np.meshgrid(np.linspace(-np.pi, np.pi, 181), np.linspace(0,2*np.pi,361))
+>>> kdemap = bt.kde(np.c_[R.flat, C.flat])
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+AttributeError: 'BallTree' object has no attribute 'kde'
+>>> kdemap = bt.kernel_density(np.c_[R.flat, C.flat], np.deg2rad(5.5/2)) 
+>>> import matplotlib.pyplot as plt
+>>> plt.imshow(kdemap, cmap='inferno')
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\matplotlib\pyplot.py", line 3562, in imshow
+    __ret = gca().imshow(
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\matplotlib\__init__.py", line 1473, in inner
+    return func(
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\matplotlib\axes\_axes.py", line 5895, in imshow
+    im.set_data(X)
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\matplotlib\image.py", line 729, in set_data
+    self._A = self._normalize_image_array(A)
+  File "C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\matplotlib\image.py", line 697, in _normalize_image_array
+    raise TypeError(f"Invalid shape {A.shape} for image data")
+TypeError: Invalid shape (65341,) for image data
+>>> plt.imshow(kdemap.reshape(R.shape), cmap='inferno') 
+<matplotlib.image.AxesImage object at 0x0000027A951B08B0>
+>>> plt.show()
+>>> DEC,RA = np.meshgrid(np.linspace(-np.pi, np.pi, 181), np.linspace(0,2*np.pi,361)) 
+>>> kdemap = bt.kernel_density(np.c_[DEC.flat, RA.flat], np.deg2rad(5.5/2)) 
+>>> plt.imshow(kdemap.reshape(RA.shape), cmap='inferno') 
+<matplotlib.image.AxesImage object at 0x0000027A97015FF0>
+>>> plt.show()
+>>> RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,361), np.linspace(-np.pi, np.pi, 181)) 
+>>> kdemap = bt.kernel_density(np.c_[DEC.flat, RA.flat], np.deg2rad(5.5/2)) 
+>>> plt.imshow(kdemap.reshape(RA.shape), cmap='inferno')
+<matplotlib.image.AxesImage object at 0x0000027A978A47C0>
+>>> plt.show()
+>>> 

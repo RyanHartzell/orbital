@@ -1,0 +1,29 @@
+>>> import numpy as np
+>>> from skimage.filters import peak_local_max 
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+ImportError: cannot import name 'peak_local_max' from 'skimage.filters' (C:\Users\rhart\Documents\Projects\orbital\venv_orbital\lib\site-packages\skimage\filters\__init__.py)
+>>> from skimage.feature import peak_local_max 
+>>> import matplotlib.pyplot as plt
+>>> a = np.random.rand(1000).reshape(10,10,10)
+>>> global_max_list = []
+>>> global_max_list = [i.max() for i in a]    
+>>> global_max_list
+[0.9984721181768629, 0.9988160566707665, 0.9974883042334531, 0.9975591510078563, 0.9992900408714589, 0.9894769100247954, 0.9921311637667968, 0.9991694235352532, 0.9620969668643614, 0.9977956205493227]
+>>> local_max_index_list = []
+>>> for i in a:
+...    local_max_index_list.append(peak_local_max(i, min_distance=5)) 
+... 
+>>> local_max_index_list   
+[array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64)]
+>>> for i in a:
+...    local_max_index_list.append(peak_local_max(i, min_distance=2)) 
+... 
+>>> local_max_index_list
+[array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([], shape=(0, 2), dtype=int64), array([[5, 4]], dtype=int64), array([[7, 4]], dtype=int64), array([[3, 4]], dtype=int64), array([[6, 2],
+       [6, 6]], dtype=int64), array([], shape=(0, 2), dtype=int64), array([[4, 4]], dtype=int64), array([[5, 6]], dtype=int64), array([[6, 4],
+       [2, 4]], dtype=int64), array([[4, 6]], dtype=int64), array([[4, 3]], dtype=int64)]
+>>> exit()
+
+
+#################### I can do better though...
