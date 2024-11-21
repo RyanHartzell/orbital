@@ -31,7 +31,7 @@ def load_satellites():
 def make_ephemerides(sats, times):
     return sats.at(times) # Geocentric ICRS
 
-# This should be the same as Geocentric ICRS (ECI) -> It's an inertial frame locked to the ICRF but centered at Earth at time t
+# This should be (basically) the same as Geocentric ICRS (ECI) -> It's an inertial frame locked to the ICRF but centered at Earth at time t
 def calculate_relative_states(host, targets, times):
     from skyfield.framelib import ecliptic_J2000_frame
     return [(t - host).at(times).frame_xyz_and_velocity(ecliptic_J2000_frame) for t in targets] # These are positions and velocities relative to host
@@ -106,23 +106,48 @@ if __name__=="__main__":
     # Basic flow
     sats = load_satellites()
 
-    # Select a host and make targets a view of the rest of the stuff in that list of satellites
+    # # Select a host and make targets a view of the rest of the stuff in that list of satellites
     host = sats[0]
     targets = sats[1:]
 
     # Get times
+    from datetime import timedelta
     ts = load.timescale()
-    times = ts.utc(2024, 11, 7, 0, range(0,3*60+1,5)) # hourly
+    t0 = ts.now()
+    times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
 
-    # Calculate apparent ra, dec, ranges relative to host state at each time t
-    obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
+    # Get access mask
+    from access import in_major_keep_out_zones, not_sunlit, out_of_range
+    sunlit_access = not_sunlit(times, targets)
+    print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
 
-    # Build all ball trees
-    bts = construct_ball_trees(obs)
+    range_access = out_of_range(times, host, targets)
+    print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
 
-    # Build all density maps
-    kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+    koz_access = in_major_keep_out_zones(times, host, targets)
+    print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
 
-    # Make animation of density maps!
-    doc = animate_heatmaps(kde_maps, times, True)
-    print(len(doc))
+    # Construct overall access mask (should be SATNUM x TIMESTEP)
+    access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
+    print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
+
+    # Plot access over time as total satellites available for observation at each timestep
+    plt.plot(times.utc_datetime(), access.sum(0))
+    plt.title("Access Plot (# of observable targets)")
+    plt.show()
+
+    # Now we filter targets which are accessible at each time for our density maps (ragged until density computed)
+
+
+    # # Calculate apparent ra, dec, ranges relative to host state at each time t
+    # obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
+
+    # # Build all ball trees
+    # bts = construct_ball_trees(obs)
+
+    # # Build all density maps
+    # kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+
+    # # Make animation of density maps!
+    # doc = animate_heatmaps(kde_maps, times, True)
+    # print(len(doc))
