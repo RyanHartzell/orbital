@@ -89,10 +89,15 @@ def construct_ball_trees(data):
 
 # This guy just takes 1d vectors for ra and dec values
 def construct_ball_tree(ras, decs):
-    return BallTree(np.c_[decs, ras], metric='haversine')
+    if len(ras) > 0:
+        return BallTree(np.c_[decs, ras], metric='haversine')
+    else:
+        return None
 
 def construct_kde_map(bt, scale=1, afov=5.5, **kwargs):
     RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,360*scale+1), np.linspace(-np.pi/2, np.pi/2, 180*scale+1))
+    if bt is None:
+        return np.zeros_like(RA)
     return bt.kernel_density(np.c_[DEC.flat, RA.flat], np.deg2rad(afov/2), **kwargs).reshape(RA.shape)
 
 # afov is full size of largest dimension of aperture in degrees
@@ -137,8 +142,8 @@ if __name__=="__main__":
     sats = load_satellites()
 
     # # Select a host and make targets a view of the rest of the stuff in that list of satellites
-    host = sats[0]
-    targets = sats[1:]
+    host = sats[99]
+    targets = sats[:99] + sats[100:]
 
     # Get times
     from datetime import timedelta
@@ -177,5 +182,5 @@ if __name__=="__main__":
     kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
 
     # # Make animation of density maps!
-    doc = animate_heatmaps(kde_maps, times, True)
+    doc = animate_heatmaps(kde_maps, times, True, 'test2')
     # print(len(doc))
