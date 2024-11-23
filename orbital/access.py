@@ -102,7 +102,7 @@ def in_major_keep_out_zones(t, observer, targets):
 
     obstarg_unit_vec = los/np.linalg.norm(los, axis=1).reshape(los.shape[0],1,los.shape[-1])
     obsmoon_unit_vec = moon_los/np.linalg.norm(moon_los, axis=1)
-    sep = dot(obsmoon_unit_vec, obstarg_unit_vec)
+    sep = np.arccos(dot(obsmoon_unit_vec, obstarg_unit_vec))
     violations = np.logical_or(violations, sep < MOON_KOZ)
 
     # Sun
@@ -110,7 +110,7 @@ def in_major_keep_out_zones(t, observer, targets):
     sun_los = (sun_pos - observer_pos)[None, ...]
     obssun_unit_vec = sun_los/np.linalg.norm(sun_los, axis=1)
 
-    sep = dot(obstarg_unit_vec, obssun_unit_vec)
+    sep = np.arccos(dot(obstarg_unit_vec, obssun_unit_vec))
     violations = np.logical_or(violations, sep < SUN_KOZ)
 
     return violations
