@@ -4,7 +4,7 @@ This should contain routines for graph-based and standard
 """
 from sklearn.metrics.pairwise import haversine_distances
 import numpy as np
-from skimage.filters import peak_local_max 
+# from skimage.filters import peak_local_max 
 
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
@@ -52,15 +52,15 @@ def calc_cost(init_obs, obs):
     return
 
 # arr is treated as a set of 2D arrays stored depth-wise (last dimension)
-def find_local_extrema(arr):
-    if arr.ndim == 3:
-        inds = []
-        for i in range(arr.shape[2]):
-            inds.append(peak_local_max(arr[:,:,i]))
-    else:
-        inds = peak_local_max(arr)
+# def find_local_extrema(arr):
+#     if arr.ndim == 3:
+#         inds = []
+#         for i in range(arr.shape[2]):
+#             inds.append(peak_local_max(arr[:,:,i]))
+#     else:
+#         inds = peak_local_max(arr)
 
-    return inds
+#     return inds
 
 # find global maximum value indices
 def global_argmax(arr):

@@ -10,13 +10,9 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import seaborn as sns
 
-# class Frame:
-#     def __init__(self) -> None:
-#         pass
-
-# class PerspectiveCamera:
-#     def __init__(self) -> None:
-#         pass
+# THESE SHOULD BE MOVED INTO A DENSITY CLASS HOLY SHIT
+SCALE = 1
+RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,int(360*SCALE+1)), np.linspace(-np.pi/2, np.pi/2, int(180*SCALE+1)))
 
 # Skyfield related stuff which we'll use as a basis for the new app (no more poliastro!!!)
 def load_satellites():
@@ -94,15 +90,22 @@ def construct_ball_tree(ras, decs):
     else:
         return None
 
-def construct_kde_map(bt, scale=1, afov=5.5, **kwargs):
-    RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,360*scale+1), np.linspace(-np.pi/2, np.pi/2, 180*scale+1))
+def construct_kde_map(bt, afov=5.5, **kwargs):
     if bt is None:
         return np.zeros_like(RA)
     return bt.kernel_density(np.c_[DEC.flat, RA.flat], np.deg2rad(afov/2), **kwargs).reshape(RA.shape)
 
 # afov is full size of largest dimension of aperture in degrees
-def construct_fov_density_map(afov=5.5, scale=(4,4)):
-    pass
+def construct_fov_density_map(bt, afov=5.5):
+    if bt is None:
+        # (Density PDF , query_result_grid) 
+        # Density can't be zero as we need to always be able to randomly sample it!!!
+        return (np.ones_like(RA)/RA.size, [np.empty(0) for _ in range(RA.size)])
+
+    # Get list of numpy arrays of indices at each query point (basically the flattened index of RA or DEC)
+    query_results = bt.query_radius(np.c_[DEC.flat, RA.flat], np.deg2rad(afov/2)) # list of numpy arrays I believe?
+    counts = np.array([len(q) for q in query_results]).reshape(RA.shape)
+    return counts / np.sum(counts), query_results
 
 # Times should be skyfield or astropy times with a utc_iso() method for formatting
 def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
@@ -179,8 +182,10 @@ if __name__=="__main__":
     bts = [construct_ball_tree(obs[0][i], obs[1][i]) for i in range(len(times))]
 
     # # Build all density maps
-    kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
+    # kde_maps = np.dstack([construct_kde_map(bt) for bt in bts]) 
+    explicit_maps = np.dstack([construct_fov_density_map(bt)[0] for bt in bts]) # Be sure to only get the density map and not the actual indices returned from the query
 
     # # Make animation of density maps!
-    doc = animate_heatmaps(kde_maps, times, True, 'test2')
+    # doc = animate_heatmaps(kde_maps, times, True, 'test2')
+    doc = animate_heatmaps(explicit_maps, times, True, 'test2_explicit')
     # print(len(doc))

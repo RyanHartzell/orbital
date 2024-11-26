@@ -203,6 +203,9 @@ if __name__=="__main__":
                 prog.progress(1.0, "Done! :sparkles:")
 
     with tabs[2]:
+        st.write("Access Opportunities over Time")
+
+    with tabs[2]:
         # Page 3 - Allows data exploration (optionally tSNE?)
         # Will show the full altair plot on this page and allow filtering the dataframe of ALL satellite GP info for the time range
         # This is just GP data!!!! No derivative values plz

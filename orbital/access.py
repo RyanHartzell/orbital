@@ -116,7 +116,7 @@ def in_major_keep_out_zones(t, observer, targets):
     return violations
 
 # Takes a time and spacecraft states at that time (min and max are km)
-def out_of_range(t, observer, targets, min_r=10., max_r=12000.):
+def out_of_range(t, observer, targets, min_r=10., max_r=24000.):
     rs = np.asarray([(targ - observer).at(t).distance().km for targ in targets])
     return np.logical_or(rs < min_r, rs > max_r) # True denotes violations
 
