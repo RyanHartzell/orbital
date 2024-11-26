@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from collections import OrderedDict
 from datetime import timedelta
+from access import in_major_keep_out_zones, not_sunlit, out_of_range
 
 custom_style = {'axes.labelcolor': 'lightblue',
                 'xtick.color': 'lightblue',
@@ -83,16 +84,20 @@ if __name__=="__main__":
     allsats = load_all_satellites()
     # print(allsats)
 
-    st.title("Basic CZML Viewer Using Python for Ephem/Trajectory Generation")
-    st.write("This viewer allows you to choose a particular (most recent) TLE from Celestrak by name and display them in an embedded CZML document.")
+    # Edit for CSCI 598
+    st.title("Density-Based Tasking of a Distributed Space-Telescope Network for Space Situational Awareness :sparkle: :telescope: :satellite:")
+    st.header("Ryan Hartzell, CSCI 598, Colorado School of Mines")
+
+    # st.title("Basic CZML Viewer Using Python for Ephem/Trajectory Generation")
+    # st.write("This viewer allows you to choose a particular (most recent) TLE from Celestrak by name and display them in an embedded CZML document.")
     
-    # I want to be able to switch between pages so need multipage app navigation on the sidebar
-    with st.sidebar:
-        st.write("Lorem ipsum yada yada yada")
+    # # I want to be able to switch between pages so need multipage app navigation on the sidebar
+    # with st.sidebar:
+    #     st.write("Lorem ipsum yada yada yada")
 
     # st.logo('Mines-Logo-triangle-blue.png', size='large')
 
-    tabs = st.tabs(["CesiumJS Orbit Visualizer", "Data Exploration: Relative RSO Density", "Data Exploration: Scatter Plot", "Data Exploration: Correlation Heatmap"])
+    tabs = st.tabs(["CesiumJS Orbit Visualizer", "Relative RSO Density", "Access Opportunity Generator", "DataEx: Scatter Plot", "DataEx: Correlation Heatmap"])
 
     with tabs[0]:
         # Page 1 - Loading and viewing satellites (need to add a checkbox for visualizing all of them?)
@@ -165,7 +170,7 @@ if __name__=="__main__":
             t0 = ts.now()
 
             # Should add selectors for time window and step
-            times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in [0,1,2,3]])) #range(0,3*60+1,5)])) # 5 minute steps over 3 hours
+            times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0,60+1,5)])) # 5 minute steps over 1 hour
             
             prog.progress(.2, "Calculating apparent RA/Dec of targets...")
 
@@ -205,8 +210,52 @@ if __name__=="__main__":
     with tabs[2]:
         st.write("Access Opportunities over Time")
 
-    with tabs[2]:
-        # Page 3 - Allows data exploration (optionally tSNE?)
+        hostname = st.selectbox("Select a host satellite for your space telescope:", satdict.keys(), key='aoselect')
+        host = (targets := allsats.copy()).pop(list(satdict.keys()).index(hostname))
+
+        aocols = st.columns(3)
+        aokoz = aocols[0].checkbox("Activate Line-of-Sight/Keep-Out-Zone Constraint?", True)
+        aorng = aocols[1].checkbox("Activate Range Constraint?", True)
+        aolit = aocols[2].checkbox("Activate Direct Sun-Lighting Constraint?", True)
+
+        # Get times
+        from datetime import timedelta
+        ts = load.timescale()
+        t0 = ts.now()
+        times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
+
+        access = np.ones((len(targets), len(times)))
+
+        if aolit:
+            sunlit_access = not_sunlit(times, targets)
+            access = access * ~sunlit_access
+            # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
+
+        if aorng:
+            range_access = out_of_range(times, host, targets)
+            access = access * ~range_access
+            # print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
+
+        if aokoz:
+            koz_access = in_major_keep_out_zones(times, host, targets)
+            access = access * ~koz_access
+            # print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
+
+        # Construct overall access mask (should be SATNUM x TIMESTEP)
+        # access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
+        # print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
+
+        # Plot access over time as total satellites available for observation at each timestep
+        fig = plt.figure()
+        plt.tick_params(axis='both', color='k', labelcolor='k')
+        plt.plot(times.utc_datetime(), access.sum(0))
+        plt.title(f"Valid Access Opportunities T+6.00 [hr]\n{host}", color='k')
+        plt.xlabel("Datetime", color='k')
+        plt.ylabel("# of Observable Targets", color='k')
+        st.pyplot(fig)
+
+    with tabs[3]:
+        # Page 4 - Allows data exploration (optionally tSNE?)
         # Will show the full altair plot on this page and allow filtering the dataframe of ALL satellite GP info for the time range
         # This is just GP data!!!! No derivative values plz
         st.write("Data Exploration Scatter Plot")
@@ -219,8 +268,8 @@ if __name__=="__main__":
             # Plot scatter plot with up-to-date choices of columns
             scatter_plot(df, x=xdata, y=ydata, color=colordata)
     
-    # Page 4: Show correlation heatmap
-    with tabs[3]:
+    # Page 5: Show correlation heatmap
+    with tabs[4]:
         # Heatmap
         heatmap(df.select_dtypes('number'))
         # Viz of dataframe

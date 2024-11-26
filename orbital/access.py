@@ -92,11 +92,21 @@ def in_major_keep_out_zones(t, observer, targets):
     # Earth
 
     observer_pos = observer.at(t).position.km
+
+    if observer_pos.ndim == 1:
+        observer_pos = observer_pos[...,None]
+
     target_pos = np.asarray([targ.at(t).position.km for targ in targets])
+    if target_pos.ndim == 2:
+        target_pos = target_pos[...,None]
+
     violations = np.asarray(los_to_earth(observer_pos, target_pos))
 
     # Moon
     moon_pos = (MOON - EARTH).at(t).position.km # GCRF
+    if moon_pos.ndim == 1:
+        moon_pos = moon_pos[...,None]
+
     moon_los = (moon_pos - observer_pos)[None, ...]
     los = target_pos - observer_pos
 
@@ -107,6 +117,8 @@ def in_major_keep_out_zones(t, observer, targets):
 
     # Sun
     sun_pos = (SUN - EARTH).at(t).position.km # GCRF
+    if sun_pos.ndim == 1:
+            sun_pos = sun_pos[...,None]
     sun_los = (sun_pos - observer_pos)[None, ...]
     obssun_unit_vec = sun_los/np.linalg.norm(sun_los, axis=1)
 
@@ -118,12 +130,17 @@ def in_major_keep_out_zones(t, observer, targets):
 # Takes a time and spacecraft states at that time (min and max are km)
 def out_of_range(t, observer, targets, min_r=10., max_r=24000.):
     rs = np.asarray([(targ - observer).at(t).distance().km for targ in targets])
+    if rs.ndim == 1:
+            rs = rs[...,None]
     return np.logical_or(rs < min_r, rs > max_r) # True denotes violations
 
 # Skyfield method
 def not_sunlit(t, targets):
     # Not sure if this syntax will work, might need to evaluate per satellite (target) in targets at all times t for efficiency
-    return ~np.asarray([targ.at(t).is_sunlit(eph) for targ in targets]) # True denotes violations
+    lit = np.asarray([targ.at(t).is_sunlit(eph) for targ in targets])
+    if lit.ndim == 1:
+        lit = lit[...,None]
+    return ~lit # True denotes violations
 
 # Skyfield method
 def behind_earth(t, observer, targets):

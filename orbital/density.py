@@ -175,17 +175,17 @@ if __name__=="__main__":
     plt.show()
 
     # # Calculate apparent ra, dec, ranges relative to host state at each time t
-    obs = reformat_radecrange(calculate_apparent_radecrange(host, np.asarray(targets), times, access), ragged=True)
+    # obs = reformat_radecrange(calculate_apparent_radecrange(host, np.asarray(targets), times, access), ragged=True)
 
     # # Build all ball trees
     # bts = construct_ball_trees(obs)
-    bts = [construct_ball_tree(obs[0][i], obs[1][i]) for i in range(len(times))]
+    # bts = [construct_ball_tree(obs[0][i], obs[1][i]) for i in range(len(times))]
 
     # # Build all density maps
     # kde_maps = np.dstack([construct_kde_map(bt) for bt in bts]) 
-    explicit_maps = np.dstack([construct_fov_density_map(bt)[0] for bt in bts]) # Be sure to only get the density map and not the actual indices returned from the query
+    # explicit_maps = np.dstack([construct_fov_density_map(bt)[0] for bt in bts]) # Be sure to only get the density map and not the actual indices returned from the query
 
     # # Make animation of density maps!
     # doc = animate_heatmaps(kde_maps, times, True, 'test2')
-    doc = animate_heatmaps(explicit_maps, times, True, 'test2_explicit')
+    # doc = animate_heatmaps(explicit_maps, times, True, 'test2_explicit')
     # print(len(doc))
