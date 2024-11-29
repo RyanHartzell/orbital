@@ -19,7 +19,7 @@ WORST_CASE_SLEW_PER_ACTION = np.pi
 class Observer:
     def __init__(self, host, host_ind):
         self.host = host
-        self.host_ind = host_ind
+        self.host_ind = int(host_ind)
         self.last_observation_end_time = None
         self.plan = [] # Contains flat indices into RA/DEC meshgrid (from density module)
         self.obs_starts = []
@@ -38,16 +38,18 @@ class Observer:
             "Index": self.host_ind,
             "Name": self.host.name,
             "Plan": self.plan,
+            "StartTimes": self.obs_starts, 
+            "EndTimes": self.obs_ends,
             "Rewards": self.reward,
-            "TotalReward": np.sum(self.reward),
+            "TotalReward": float(np.sum(self.reward)),
             "Costs": self.cost,
-            "TotalCost": np.sum(self.cost)
+            "TotalCost": float(np.sum(self.cost))
         }
 
     def save(self, fname):
         # This should save to disk whatever Observer data we want as a pandas dataframe CSV maybe?
         with open(fname, 'w') as f:
-            f.write(json.dumps(self.as_dict()))
+            f.write(json.dumps(self.as_dict())) # TAKE CARE CONVERTING NUMPY TYPES TO JSON!!! Must be raw python types for base serializer to work
 
     def save_maps(self, fname):
         np.savez(fname, np.dstack(self.maps))
@@ -63,8 +65,14 @@ class Observer:
 #     return inds
 
 # find global maximum value indices
-def global_argmax(arr):
-    return np.where(np.isclose(arr, arr.max()))
+def global_argmax(arr, thresh=None):
+    if thresh is None:
+        # True greediness
+        return np.where(np.isclose(arr, arr.max()))
+    
+    else:
+        # Stochastic behavior
+        return np.where(arr > (thresh * arr.max()))
 
 # GREEDY OBS PLANNER
 def greedy_obs_plan_gen(observers, time_window_start, time_window_end):
@@ -101,13 +109,13 @@ def update_uncertainty(U0, dt, rate=0.1/3600): # rate is 0.1 km/h converted to k
 
 # Integration time + slew time
 # def obs_duration(slew, avg_target_distance):
-def obs_duration(slew, slew_rate=np.pi/4, frames=7, integration=0.5):
+def obs_duration(slew, slew_rate=np.pi/4, frames=7, integration=1):
     # For simplicity (slew in radians / slew rate in rad/s) + (frames unitless * integration in s) = duration in s
     return slew / slew_rate + frames * integration
 
 # Value (observation/collection quality)
 # Target records should just be a list of the same length as the full targets list, but with a dictionary of data stored at each element (essentially per target)
-def compute_reward(t, target_records, access, query_result, max_allowable_unseen=timedelta(hours=1.0)):
+def compute_reward(t, target_records, access, query_result, max_allowable_unseen=timedelta(hours=0.5)):
     # Get subset of target record dictionaries
     targ_recs = target_records[access[:,0]][query_result] # Query result is flattened index w.r.t accessible targets
 
@@ -119,7 +127,7 @@ def compute_reward(t, target_records, access, query_result, max_allowable_unseen
         dt = timedelta(seconds=(t - tr["last_seen"])) # Timedelta, which I believe is evaluated as seconds
 
         # 0.1 km is the default reset value for uncertainty
-        reward += (update_uncertainty(tr["last_uncertainty"], dt) - 0.1 + (dt > max_allowable_unseen))
+        reward += (update_uncertainty(tr["last_uncertainty"], dt) - 0.1 + 10*(dt > max_allowable_unseen))
 
     return reward
 
@@ -131,7 +139,7 @@ def init_greedy(o, targets):
     t = o.last_observation_end_time
     host = o.host
 
-    # Get access mask
+    # Get access mask (THIS WE SHOULD ACCELERATE AND PRECOMPUTE!!!)
     sunlit_access = not_sunlit(t, targets)
     # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
 
@@ -165,7 +173,7 @@ def init_greedy(o, targets):
 
 
 # We just assume the slew is part of the observation since we already have the asumption that none of these targets are moving faster than a field of view during observation, and slew time is negligible
-def execute_greedy_step(o, targets, target_records):
+def execute_greedy_step(o, targets, target_records, stochastic=False):
     t = o.last_observation_end_time
     host = o.host
 
@@ -202,10 +210,18 @@ def execute_greedy_step(o, targets, target_records):
         for i,q in enumerate(query_results):
             if (len(q) > 0):
                 value_map[i]=compute_reward(t, target_records, access, q)
+        
+        # This might be causing a slowdown (unnecessary reshape and flattening)
         value_map = value_map.reshape(density_map.shape)
+        new_state_index = np.ravel_multi_index(global_argmax(value_map, 0.8), value_map.shape) # This is the set of all "best" move options above some threshold
 
-        # Pick best value index (argmax)
-        new_state_index = np.ravel_multi_index(global_argmax(value_map), value_map.shape)[0] # I can change this to a random sample instead...
+        if stochastic:
+            # Choose using density as PDF?
+            new_state_index = np.random.choice(new_state_index)
+
+        else:
+            # Pick best value index (0th argmax occurence in array)
+            new_state_index = new_state_index[0]
 
         # Technically should be moving this up into the value_map builder above, but assuming slew is negligible for now...
         slew = compute_cost(o.current_state_index, new_state_index)
@@ -222,48 +238,51 @@ def execute_greedy_step(o, targets, target_records):
     o.last_observation_end_time = t + duration
 
     # Update observer traces
-    o.plan.append(new_state_index)
-    o.obs_starts.append(t)
-    o.obs_ends.append(o.last_observation_end_time)
-    o.reward.append(value_map.flat[new_state_index])
-    o.cost.append(slew/WORST_CASE_SLEW_PER_ACTION)
+    o.plan.append(int(new_state_index))
+    o.obs_starts.append(t.utc_iso())
+    o.obs_ends.append(o.last_observation_end_time.utc_iso())
+    o.reward.append(float(value_map.flat[new_state_index]))
+    o.cost.append(float(slew.flat[0]/WORST_CASE_SLEW_PER_ACTION))
 
     # In this case, let's dump in the value map
     o.maps.append(value_map)
 
     # For each target, update our global target record with last seen time and updated uncertainty!!!
     for tr in target_records[access[:,0]][query_results[new_state_index]]:
-        tr["last_uncertainty"] = update_uncertainty(tr["last_uncertainty"], timedelta(seconds=(t - tr["last_seen"])))
+        # tr["last_uncertainty"] = update_uncertainty(tr["last_uncertainty"], timedelta(seconds=(t - tr["last_seen"])))
+        tr["last_uncertainty"] = 0.1
         tr["last_seen"] = o.last_observation_end_time
- 
-    # # state'
-    # return new_state_index
 
 if __name__=="__main__":
     sats = load_satellites()
 
+    import time
+    start = time.perf_counter()
+
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:]
+    targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Get times
     ts = load.timescale()
     tstart = ts.now()
-    tend = tstart + timedelta(seconds=50) # Our time window is 5 minutes long to start
+    tend = tstart + timedelta(minutes=60) # Our time window is 5 minutes long to start
     # times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
 
     observers = [Observer(h, i) for i,h in enumerate(hosts)]
 
     opt = greedy_obs_plan_gen(observers, tstart, tend)
 
-    print(opt)
+    # print(opt)
 
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     for o in opt:
-        print(o.as_dict())
+        # print(o.as_dict())
         o.save(f"results/{o.host_ind}_{timestamp}.json")
-        o.save_arr(f"results/HostID{o.host_ind}_{timestamp}.npz")
+        o.save_maps(f"results/HostID{o.host_ind}_{timestamp}.npz")
 
     # Try plotting? Need to modify the animate heatmaps dude from density such that it can take an equal length array of observation (RA,DEC) values...
 
+    elapsed = time.perf_counter() - start
+    print(f"Simulated observation planning took {elapsed} [s] to complete a plan for {len(hosts)} hosts spanning {tstart.utc_iso()} to {tend.utc_iso()}.")

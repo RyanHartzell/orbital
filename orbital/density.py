@@ -4,7 +4,7 @@ Calculate AzEl from ephemeris data, then density
 import httpx
 import json
 import numpy as np
-from skyfield.api import load, EarthSatellite
+from skyfield.api import load, EarthSatellite, Time
 from sklearn.neighbors import BallTree
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -109,28 +109,24 @@ def construct_fov_density_map(bt, afov=5.5):
 
 # Times should be skyfield or astropy times with a utc_iso() method for formatting
 def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
-    print("Heatmaps shape: ", heatmaps.shape)
     fig, ax = plt.subplots()
     sns.set_style('darkgrid')
-    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso()}", color='black')
+    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso() if isinstance(times[0], Time) else times[0]}", color='black')
     ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
     ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
 
-    hm = ax.imshow(heatmaps[:,:,0], cmap="inferno")
-    ax.set_ylim(-np.pi/2, np.pi/2)
-    hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
+    ax.imshow(heatmaps[:,:,0], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
 
     # Define the animation function
     def update(frame):
         ax.cla()
         sns.set_style('darkgrid')
-        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso()}", color='black')
+        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso() if isinstance(times[0], Time) else times[0]}", color='black')
         ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
         ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
-        hm = ax.imshow(heatmaps[:,:,frame], cmap="inferno")
-        ax.set_ylim(-np.pi/2, np.pi/2)
-        hm.set_extent((0, 2*np.pi, -np.pi/2, np.pi/2))
-        return hm
+        ax.imshow(heatmaps[:,:,frame], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
+
+        return ax
 
     # Create the animation object
     ani = FuncAnimation(fig, update, frames=list(range(1,len(times)))) #, interval=20, blit=True)
@@ -140,39 +136,124 @@ def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
             f.write(doc)
     return doc
 
+# Times should be skyfield or astropy times with a utc_iso() method for formatting, or string
+def animate_observation_plan(heatmaps, obs_ra, obs_dec, times, to_disk=False, filename='test'):
+    # print("Heatmaps shape: ", heatmaps.shape)
+    fig, ax = plt.subplots()
+    # sns.set_style('darkgrid')
+    ax.grid(False)
+    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso() if isinstance(times[0], Time) else times[0]}", color='black')
+    ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+    ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+
+    ax.imshow(heatmaps[:,:,0], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
+
+    # Plot obs position
+    ax.scatter(obs_ra[0], obs_dec[0],s=20*4**2, c='green', marker='1', capstyle='round')
+
+    # Define the animation function
+    def update(frame):
+        ax.cla()
+        # sns.set_style('darkgrid')
+        ax.grid(False)
+        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso() if isinstance(times[0], Time) else times[0]}", color='black')
+        ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+        ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+        ax.imshow(heatmaps[:,:,frame], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
+
+        # Add observation point
+        ax.scatter(obs_ra[frame], obs_dec[frame],s=20*4**2, c='green', marker='1', capstyle='round') #, markeredgecolor='white')
+
+        return ax
+
+    # Create the animation object
+    ani = FuncAnimation(fig, update, frames=list(range(1,len(times)))) #, interval=20, blit=True)
+    doc = ani.to_jshtml()
+    if to_disk:
+        with open(filename+'.html', 'w') as f:
+            f.write(doc)
+    return doc
+
+# Times should be skyfield or astropy times with a utc_iso() method for formatting, or string
+# This should plot ALL obs plans as time-ordered where the obs are colored by their respective host id (categorical)
+# Okay....... this should probably be a bunch of subplots tbh..................
+def animate_all_observation_plans(heatmaps, obs_ra, obs_dec, times, ids, to_disk=False, filename='test'):
+
+    # TODO: Move merging and sorting code in here.....
+    import matplotlib as mpl
+
+    colors = [mpl.color_sequences['tab10'][i%10] for i in range(max(ids)+1)]
+    print(len(colors))
+
+    fig, ax = plt.subplots()
+    # sns.set_style('darkgrid')
+    ax.grid(False)
+    ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[0].utc_iso() if isinstance(times[0], Time) else times[0]}", color='black')
+    ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+    ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+
+    ax.imshow(heatmaps[:,:,0], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
+
+    # Plot obs position
+    ax.scatter(obs_ra[0], obs_dec[0],s=20*4**2, color=colors[ids[0]], marker='1', capstyle='round')
+
+    # Define the animation function
+    def update(frame):
+        ax.cla()
+        # sns.set_style('darkgrid')
+        ax.grid(False)
+        ax.set_title(f"Host-Centered Apparent Geocentric ICRF \nTarget Density at $t=${times[frame].utc_iso() if isinstance(times[0], Time) else times[frame]}", color='black')
+        ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+        ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+        ax.imshow(heatmaps[:,:,frame], cmap="inferno", extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower', vmax=heatmaps.max())
+
+        # Add observation point
+        ax.scatter(obs_ra[frame], obs_dec[frame],s=20*4**2, color=colors[ids[frame]], marker='1', capstyle='round') #, markeredgecolor='white')
+
+        return ax
+
+    # Create the animation object
+    ani = FuncAnimation(fig, update, frames=list(range(1,len(times)))) #, interval=20, blit=True)
+    doc = ani.to_jshtml()
+    if to_disk:
+        with open(filename+'.html', 'w') as f:
+            f.write(doc)
+    return doc
+
+
 if __name__=="__main__":
-    # Basic flow
-    sats = load_satellites()
+    # # Basic flow
+    # sats = load_satellites()
 
-    # # Select a host and make targets a view of the rest of the stuff in that list of satellites
-    host = sats[99]
-    targets = sats[:99] + sats[100:]
+    # # # Select a host and make targets a view of the rest of the stuff in that list of satellites
+    # host = sats[99]
+    # targets = sats[:99] + sats[100:]
 
-    # Get times
-    from datetime import timedelta
-    ts = load.timescale()
-    t0 = ts.now()
-    times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
+    # # Get times
+    # from datetime import timedelta
+    # ts = load.timescale()
+    # t0 = ts.now()
+    # times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
 
-    # Get access mask
-    from access import in_major_keep_out_zones, not_sunlit, out_of_range
-    sunlit_access = not_sunlit(times, targets)
-    print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
+    # # Get access mask
+    # from access import in_major_keep_out_zones, not_sunlit, out_of_range
+    # sunlit_access = not_sunlit(times, targets)
+    # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
 
-    range_access = out_of_range(times, host, targets)
-    print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
+    # range_access = out_of_range(times, host, targets)
+    # print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
 
-    koz_access = in_major_keep_out_zones(times, host, targets)
-    print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
+    # koz_access = in_major_keep_out_zones(times, host, targets)
+    # print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
 
-    # Construct overall access mask (should be SATNUM x TIMESTEP)
-    access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
-    print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
+    # # Construct overall access mask (should be SATNUM x TIMESTEP)
+    # access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
+    # print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
 
-    # Plot access over time as total satellites available for observation at each timestep
-    plt.plot(times.utc_datetime(), access.sum(0))
-    plt.title("Access Plot (# of observable targets)")
-    plt.show()
+    # # Plot access over time as total satellites available for observation at each timestep
+    # plt.plot(times.utc_datetime(), access.sum(0))
+    # plt.title("Access Plot (# of observable targets)")
+    # plt.show()
 
     # # Calculate apparent ra, dec, ranges relative to host state at each time t
     # obs = reformat_radecrange(calculate_apparent_radecrange(host, np.asarray(targets), times, access), ragged=True)
@@ -189,3 +270,58 @@ if __name__=="__main__":
     # doc = animate_heatmaps(kde_maps, times, True, 'test2')
     # doc = animate_heatmaps(explicit_maps, times, True, 'test2_explicit')
     # print(len(doc))
+
+    ######################################################
+    # TEST OBS PLAN VISUALIZATION!!! (Should be moved into its own file probably...)
+
+    import json
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import glob
+
+    for fj, fhm in zip(glob.glob('results/*-16.json'), glob.glob('results/*-16.npz')):
+        observer_record = json.load(open(fj))
+        obs_inds = observer_record['Plan']
+        obs_ra = RA.flat[obs_inds]
+        obs_dec = DEC.flat[obs_inds]
+
+        value = np.load(fhm)['arr_0']
+        animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fhm.split('.')[0]}")
+
+    # import glob
+    # jsons = glob.glob('results/*.json')
+    # heatmaps = glob.glob('results/*.npz') 
+
+    # def load_heatmap(files):            
+    #     for f in files:
+    #         yield np.load(f)['arr_0'] 
+
+    # def load_obs_rec(files):
+    #     for f in files:
+    #         with open(f) as j:       
+    #             yield json.load(j)
+
+    # recs = [*load_obs_rec(jsons)]  
+    # hm = [*load_heatmap(heatmaps)]
+
+    # new_times = sum([r['EndTimes'] for r in recs], []) 
+    # timesort = np.argsort(new_times) 
+    # hmstack = np.dstack(hm) 
+    # hmsort = hmstack[..., timesort] 
+    # print(hmsort.shape)
+
+    # plans = sum([r['Plan'] for r in recs], []) 
+    # plansort = np.asarray(plans)[timesort] 
+    # full_obs_ra = RA.flat[plansort] 
+    # full_obs_dec = DEC.flat[plansort] 
+    # print(len(full_obs_dec))
+
+    # ids = sum([[r['Index']]*len(r['Plan']) for r in recs], []) 
+    # ids = np.asarray(ids)[timesort]
+    # print(len(ids))
+
+    # timesorted = np.asarray(new_times)[timesort]
+    # print(len(timesorted))
+
+    # # Now try our new func for visualizing all of the obs
+    # animate_all_observation_plans(hmsort, full_obs_ra, full_obs_dec, timesorted, ids, to_disk=True, filename='allobsplanviz')
