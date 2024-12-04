@@ -14,6 +14,7 @@ import seaborn as sns
 from collections import OrderedDict
 from datetime import timedelta
 from access import in_major_keep_out_zones, not_sunlit, out_of_range
+from skyfield.api import load
 
 custom_style = {'axes.labelcolor': 'lightblue',
                 'xtick.color': 'lightblue',
@@ -116,9 +117,9 @@ if __name__=="__main__":
         sats = [satdict[satname] for satname in options]
 
         # Sample satellite records at various explicit times
-        t0 = Time.now() - (1.0 << u.h)
+        t0 = Time.now() # - (1.0 << u.h)
         t1 = t0 + (1.0 << u.h)
-        times = time_range(t0, end=t1, periods=100)
+        times = time_range(t0, end=t1, periods=60)
 
         # Convert satellite records to ephemerides
         ephems = [ephem_from_gp(sat, times) for sat in sats]

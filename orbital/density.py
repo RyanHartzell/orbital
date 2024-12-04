@@ -10,6 +10,24 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import seaborn as sns
 
+__all__=(
+    "SCALE",
+    "RA",
+    "DEC",
+    "load_satellites",
+    "make_ephemerides",
+    "calculate_relative_states",
+    "calculate_apparent_radecrange",
+    "reformat_radecrange",
+    "construct_ball_trees",
+    "construct_ball_tree",
+    "construct_kde_map",
+    "construct_fov_density_map",
+    "animate_heatmaps",
+    "animate_observation_plan",
+    "animate_all_observation_plans",
+)
+
 # THESE SHOULD BE MOVED INTO A DENSITY CLASS HOLY SHIT
 SCALE = 1
 RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,int(360*SCALE+1)), np.linspace(-np.pi/2, np.pi/2, int(180*SCALE+1)))
