@@ -15,6 +15,7 @@ from collections import OrderedDict
 from datetime import timedelta
 from access import in_major_keep_out_zones, not_sunlit, out_of_range
 from skyfield.api import load
+from access import MAX_LOS_RANGE, MIN_LOS_RANGE, MOON_KOZ, SUN_KOZ
 
 custom_style = {'axes.labelcolor': 'lightblue',
                 'xtick.color': 'lightblue',
@@ -77,6 +78,12 @@ def heatmap(df):
     ax.set_title("Pearson Cross-Correlation Heatmap", color='lightblue')
     sns.heatmap(df.corr(), ax=ax, vmin=-1., vmax=1.)
     st.pyplot(fig)
+
+### ACCESS OPP WRAPPERS FOR CACHING
+# Runs into cacheing issues due to use of non-hashable types. Could also supply hash funcs for the time objects and satellite objects instead..... that way they'd hash well
+# in_major_keep_out_zones = st.cache_data(in_major_keep_out_zones)
+# out_of_range = st.cache_data(out_of_range)
+# not_sunlit = st.cache_data(not_sunlit)
 
 if __name__=="__main__":
     # Load (and cache) our list of satellite names for multiselect
@@ -172,41 +179,61 @@ if __name__=="__main__":
 
             # Should add selectors for time window and step
             times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0,60+1,5)])) # 5 minute steps over 1 hour
-            
-            prog.progress(.2, "Calculating apparent RA/Dec of targets...")
+
+            # Computing default access opportunities
+            prog.progress(.2, "Computing default target access from host...")
+
+            sunlit_access = not_sunlit(times, targets)
+            range_access = out_of_range(times, host, targets)
+            koz_access = in_major_keep_out_zones(times, host, targets)
+
+            access = ~sunlit_access * ~range_access * ~koz_access
+
+            prog.progress(.4, "Calculating apparent RA/Dec of targets...")
 
             # Calculate apparent ra, dec, ranges relative to host state at each time t
-            obs = reformat_radecrange(calculate_apparent_radecrange(host, targets, times))
+            obs = reformat_radecrange(calculate_apparent_radecrange(host, np.asarray(targets), times, access), ragged=True)
 
             # Check for nans and filter out any row with at least one nan (and report in dictionary? maybe??)
             # print("SANITY CHECK: OBS SHAPE: ", obs.shape)
             # obs = obs[np.sum(np.isnan(obs), (1,2)).astype(bool),:,:]
             # print("SANITY CHECK: OBS SHAPE: ", obs.shape)
 
-            if np.any(np.isnan(obs)):
-                prog.progress(1.0, "Abort.")
-                st.write("% NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs))/np.size(obs)*100.)
-                st.write("# NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs)))
-                st.write("Aborting due to NaN values in observation table... :warning:")
-            else:
+            # if np.any(np.isnan(obs)):
+            #     prog.progress(1.0, "Abort.")
+            #     st.write("% NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs))/np.size(obs)*100.)
+            #     st.write("# NaNs in RA/DEC/RANGE = ", np.sum(np.isnan(obs)))
+            #     st.write("Aborting due to NaN values in observation table... :warning:")
+            # else:
 
-                prog.progress(.4, "Generating BallTree representations...")
+            try:
+
+                prog.progress(.5, "Generating BallTree representations...")
 
                 # Build all ball trees
-                bts = construct_ball_trees(obs)
+                bts = [construct_ball_tree(obs[0][i], obs[1][i]) for i in range(len(times))]
 
                 prog.progress(.6, "Building density maps...")
 
                 # Build all density maps
                 kde_maps = np.dstack([construct_kde_map(bt) for bt in bts])
 
-                prog.progress(.8, "Almost done! ...")
+                prog.progress(.95, "Almost done! ...")
 
                 # Make animation of density maps!
                 doc = animate_heatmaps(kde_maps, times, False)
                 components.html(doc, height=600, scrolling=True)
 
                 prog.progress(1.0, "Done! :sparkles:")
+
+                dl = st.fragment(st.download_button('Download access-aware density animation!', data=doc, file_name='density.html', mime='text/html'))
+
+            except Exception as e:
+                st.write('There are likely nans in the observation table. Aborting... :poop:')
+                raise e
+
+            if dl:
+                st.write('To display your downloaded animation, open it in your favorite browser!')
 
     with tabs[2]:
         st.write("Access Opportunities over Time")
@@ -215,9 +242,17 @@ if __name__=="__main__":
         host = (targets := allsats.copy()).pop(list(satdict.keys()).index(hostname))
 
         aocols = st.columns(3)
-        aokoz = aocols[0].checkbox("Activate Line-of-Sight/Keep-Out-Zone Constraint?", True)
-        aorng = aocols[1].checkbox("Activate Range Constraint?", True)
-        aolit = aocols[2].checkbox("Activate Direct Sun-Lighting Constraint?", True)
+        aokoz = aocols[0].toggle("Activate Line-of-Sight/Keep-Out-Zone Constraint?", True)
+        aorng = aocols[1].toggle("Activate Range Constraint?", True)
+        aolit = aocols[2].toggle("Activate Direct Sun-Lighting Constraint?", True)
+
+        # Set up constraint inputs in separate column structure, active by above bools
+        aonumcols = st.columns(5)
+        maxrng = aonumcols[1].number_input('Enter a maximum range [km]:', min_value=0.0, value=MAX_LOS_RANGE, disabled=not aorng, key='aomaxrng_num')
+        minrng = aonumcols[0].number_input('Enter a minimum range [km]:', min_value=0.0, max_value=MAX_LOS_RANGE, value=MIN_LOS_RANGE, disabled=not aorng, key='aominrng_num')
+        sunkoz = np.deg2rad(aonumcols[2].number_input('Enter Sun Keep Out Zone [deg]:', min_value=0.0, max_value=90., value=np.rad2deg(SUN_KOZ), disabled=not aokoz, key='aosunkoz_num'))
+        moonkoz = np.deg2rad(aonumcols[3].number_input('Enter Moon Keep Out Zone [deg]:', min_value=0.0, max_value=90., value=np.rad2deg(MOON_KOZ), disabled=not aokoz, key='aomoonkoz_num'))
+        earthkoz = aonumcols[4].number_input('Enter an altitude Earth KOZ [km]:', min_value=0.0, value=90., disabled=not aokoz)
 
         # Get times
         from datetime import timedelta
@@ -227,24 +262,32 @@ if __name__=="__main__":
 
         access = np.ones((len(targets), len(times)))
 
+        progao = st.progress(0.0, "Computing access opportunities...")
+        amount_done = 0.0
+
         if aolit:
             sunlit_access = not_sunlit(times, targets)
             access = access * ~sunlit_access
-            # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
+            amount_done += 0.333
+            progao.progress(amount_done, "Computed direct sunlight access constraint.")
 
         if aorng:
-            range_access = out_of_range(times, host, targets)
+            range_access = out_of_range(times, host, targets, min_r=minrng, max_r=maxrng)
             access = access * ~range_access
-            # print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
+            amount_done += 0.333
+            progao.progress(amount_done, "Computed LOS range access constraint.")
 
         if aokoz:
-            koz_access = in_major_keep_out_zones(times, host, targets)
+            koz_access = in_major_keep_out_zones(times, host, targets, moon_koz_deg=moonkoz, sun_koz_deg=sunkoz, earth_alt_koz_pad_km=earthkoz)
             access = access * ~koz_access
-            # print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
+            amount_done += 0.333
+            progao.progress(amount_done, "Computed KOZ access constraints.")
 
         # Construct overall access mask (should be SATNUM x TIMESTEP)
         # access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
         # print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
+
+        progao.progress(1.0, "Done! :sparkles:")
 
         # Plot access over time as total satellites available for observation at each timestep
         fig = plt.figure()

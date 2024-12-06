@@ -23,6 +23,9 @@ EARTH_SEMI_MAJOR_WGS84 = 6378.137 # km
 SUN_KOZ = np.deg2rad(15.0) # Overly conservative, just degrees from center
 # EARTH_KOZ_FROM_LIMB = 2.0 # Overly conservative, takes into account angular extent of Earth and adds padding
 MOON_KOZ = np.deg2rad(10.0) # Overly conservative, just degrees from center
+EARTH_KOZ_ALT_PAD = 90. # km
+MIN_LOS_RANGE = 10. # km
+MAX_LOS_RANGE = 24000. # km
 
 # Load planets up front!
 eph = load('de421.bsp')
@@ -34,7 +37,7 @@ def dot(a, b):
 
 # This function came from: https://stephenhartzell.medium.com/satellite-line-of-sight-intersection-with-earth-d786b4a6a9b6
 # Modified to be a little bit more vectorized
-def los_to_earth(observer_pos, target_pos, padding=90.):
+def los_to_earth(observer_pos, target_pos, padding=EARTH_KOZ_ALT_PAD):
     """Find the intersection of a pointing vector with the Earth
     Finds the intersection of a pointing vector u and starting point s with the WGS-84 geoid
         NOTE: args must be in [km] and must be using a cartesian GCRF ref frame so ellipsoid is evaluated properly 
@@ -86,7 +89,7 @@ def los_to_earth(observer_pos, target_pos, padding=90.):
     # ])
 
 # Takes a time and spacecraft states at that time
-def in_major_keep_out_zones(t, observer, targets):
+def in_major_keep_out_zones(t, observer, targets, earth_alt_koz_pad_km=EARTH_KOZ_ALT_PAD, moon_koz_deg=MOON_KOZ, sun_koz_deg=SUN_KOZ):
     # Return True or False (or an array of booleans)
     # This should evaluate Earth, Moon, and Sun KOZ at time t against spacecraft states and return the union (True == 'this state was in KOZ, so throw out')
     # Earth
@@ -100,7 +103,7 @@ def in_major_keep_out_zones(t, observer, targets):
     if target_pos.ndim == 2:
         target_pos = target_pos[...,None]
 
-    violations = np.asarray(los_to_earth(observer_pos, target_pos))
+    violations = np.asarray(los_to_earth(observer_pos, target_pos, earth_alt_koz_pad_km))
 
     # Moon
     moon_pos = (MOON - EARTH).at(t).position.km # GCRF
@@ -113,7 +116,7 @@ def in_major_keep_out_zones(t, observer, targets):
     obstarg_unit_vec = los/np.linalg.norm(los, axis=1).reshape(los.shape[0],1,los.shape[-1])
     obsmoon_unit_vec = moon_los/np.linalg.norm(moon_los, axis=1)
     sep = np.arccos(dot(obsmoon_unit_vec, obstarg_unit_vec))
-    violations = np.logical_or(violations, sep < MOON_KOZ)
+    violations = np.logical_or(violations, sep < moon_koz_deg)
 
     # Sun
     sun_pos = (SUN - EARTH).at(t).position.km # GCRF
@@ -123,12 +126,12 @@ def in_major_keep_out_zones(t, observer, targets):
     obssun_unit_vec = sun_los/np.linalg.norm(sun_los, axis=1)
 
     sep = np.arccos(dot(obstarg_unit_vec, obssun_unit_vec))
-    violations = np.logical_or(violations, sep < SUN_KOZ)
+    violations = np.logical_or(violations, sep < sun_koz_deg)
 
     return violations
 
 # Takes a time and spacecraft states at that time (min and max are km)
-def out_of_range(t, observer, targets, min_r=10., max_r=24000.):
+def out_of_range(t, observer, targets, min_r=MIN_LOS_RANGE, max_r=MAX_LOS_RANGE):
     rs = np.asarray([(targ - observer).at(t).distance().km for targ in targets])
     if rs.ndim == 1:
             rs = rs[...,None]
