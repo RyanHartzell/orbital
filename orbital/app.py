@@ -264,23 +264,24 @@ if __name__=="__main__":
 
         progao = st.progress(0.0, "Computing access opportunities...")
         amount_done = 0.0
+        amount_done_inc = 1 / sum([aolit, aorng, aokoz])
 
         if aolit:
             sunlit_access = not_sunlit(times, targets)
             access = access * ~sunlit_access
-            amount_done += 0.333
+            amount_done += amount_done_inc
             progao.progress(amount_done, "Computed direct sunlight access constraint.")
 
         if aorng:
             range_access = out_of_range(times, host, targets, min_r=minrng, max_r=maxrng)
             access = access * ~range_access
-            amount_done += 0.333
+            amount_done += amount_done_inc
             progao.progress(amount_done, "Computed LOS range access constraint.")
 
         if aokoz:
             koz_access = in_major_keep_out_zones(times, host, targets, moon_koz_deg=moonkoz, sun_koz_deg=sunkoz, earth_alt_koz_pad_km=earthkoz)
             access = access * ~koz_access
-            amount_done += 0.333
+            amount_done += amount_done_inc
             progao.progress(amount_done, "Computed KOZ access constraints.")
 
         # Construct overall access mask (should be SATNUM x TIMESTEP)
@@ -292,10 +293,18 @@ if __name__=="__main__":
         # Plot access over time as total satellites available for observation at each timestep
         fig = plt.figure()
         plt.tick_params(axis='both', color='k', labelcolor='k')
-        plt.plot(times.utc_datetime(), access.sum(0))
+        plt.plot(times.utc_datetime(), access.sum(0), label='Total Access')
+        if aolit:
+            plt.plot(times.utc_datetime(), (~sunlit_access).sum(0), '--', label='Sunlit Access')
+        if aorng:    
+            plt.plot(times.utc_datetime(), (~range_access).sum(0), '--', label='Range Access')
+        if aokoz:
+            plt.plot(times.utc_datetime(), (~koz_access).sum(0), '--', label='KOZ Access')
+        
         plt.title(f"Valid Access Opportunities T+6.00 [hr]\n{host}", color='k')
         plt.xlabel("Datetime", color='k')
         plt.ylabel("# of Observable Targets", color='k')
+        plt.legend(loc='upper right')
         st.pyplot(fig)
 
     with tabs[3]:
