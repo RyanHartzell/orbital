@@ -297,7 +297,17 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     import glob
 
-    for fj, fhm in zip(glob.glob('results/*-16.json'), glob.glob('results/*-16.npz')):
+    # This is our training plot of reward traces per training episode (aka 100 rewards for 100 episodes)
+    for fr in glob.glob('results/reward_traces_*-15.npz'):
+        training_rewards = np.load(fr)['arr_0']
+        print(training_rewards.shape) # should be (# hosts, # episodes)
+
+        plt.plot(training_rewards.T)
+        plt.legend(labels=range(training_rewards.shape[0]))
+        plt.show()
+
+    # These are the evaluation observer records, so a single episode
+    for fj, fhm in zip(glob.glob('results/*-15.json'), glob.glob('results/*-15.npz')):        
         observer_record = json.load(open(fj))
         obs_inds = observer_record['Plan']
         obs_ra = RA.flat[obs_inds]
