@@ -11,6 +11,9 @@ from astropy import units as u
 from skyfield.api import load
 import json
 import warnings
+import tqdm
+
+import multiprocessing
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -89,17 +92,26 @@ def greedy_obs_plan_gen(observers, time_window_start, time_window_end):
     # Init target records
     target_records = np.asarray([{"last_seen": time_window_start, "last_uncertainty": 1.0} for _ in targets])
 
-    while observers:
-        observers = sorted(observers) # __lt__ should be used to compare two observers by latest_timestamp (end of previous observation), with earliest going first
-        for i,o in enumerate(observers):
-            # do execute greedy step
+    # Start progress bar using "time remaining" as the proxy for progress %
+    with tqdm.tqdm(total=timedelta(time_window_end-time_window_start).total_seconds(), unit='sim s') as pbar:
+        saved_t = time_window_start
 
-            # Observer data should be updated at the end of this (reward, cost, new state, last observation end time)
-            # TargetRecords should be updated at the end of this function as well (last seen time, last uncertainty)
-            execute_greedy_step(o, targets, target_records)
+        while observers:
+            observers = sorted(observers) # __lt__ should be used to compare two observers by latest_timestamp (end of previous observation), with earliest going first
 
-            if o.last_observation_end_time > time_window_end:     
-                final.append(observers.pop(i))
+            # Log earliest time for progress bar
+            pbar.update(timedelta(observers[0].last_observation_end_time - saved_t).total_seconds())
+            saved_t = observers[0].last_observation_end_time
+
+            for i,o in enumerate(observers):
+                # do execute greedy step
+
+                # Observer data should be updated at the end of this (reward, cost, new state, last observation end time)
+                # TargetRecords should be updated at the end of this function as well (last seen time, last uncertainty)
+                execute_greedy_step(o, targets, target_records)
+
+                if o.last_observation_end_time > time_window_end:     
+                    final.append(observers.pop(i))
 
     # All observation chains are stored on the objects returned in final (which may be in a differnt order than the initial observer list)
     return final
@@ -180,6 +192,7 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
 
     # print(f"[INFO] Now processing {o.host} @ time = {t}")
 
+    # TODO: RH - ALL OF THESE SHOULD BE ACCELERATED!!!! THEY CAN BE PERFORMED ASYNC WITH MULTIPROCESSING POOLS!!!
     # Get access mask
     sunlit_access = not_sunlit(t, targets)
     # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
@@ -207,6 +220,7 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
     # For each mesh point, calculate obs value
     value_map = np.zeros(density_map.size)
 
+    # TODO: RH - THIS CAN FOR SURE BE VECTORIZED
     if (np.sum(access) > 0):
         for i,q in enumerate(query_results):
             if (len(q) > 0):
@@ -232,7 +246,9 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
         value_map[...] = np.ones_like(density_map) / density_map.size
         new_state_index = o.current_state_index
         slew = 0.0
-        duration = timedelta(seconds=0.0)
+
+        # Perhaps wait 1/30th of a second
+        duration = timedelta(seconds=0.0) # This might need to be nudged slightly, else won't we just keep seeing the same access issues???
  
     # Now update all the stuff we need on the observer!
     o.current_state_index = new_state_index
@@ -267,8 +283,12 @@ if __name__=="__main__":
     # Get times
     ts = load.timescale()
     tstart = ts.now()
-    tend = tstart + timedelta(minutes=60) # Our time window is 5 minutes long to start
+    tend = tstart + timedelta(minutes=10) # Our time window is 5 minutes long to start
     # times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
+
+    print("START_TIME        : ", tstart.utc_iso())
+    print("END_TIME          : ", tend.utc_iso())
+    print("PLAN DURATION [s] : ", timedelta(days=tend-tstart).total_seconds())
 
     observers = [Observer(h, i) for i,h in enumerate(hosts)]
 
@@ -278,10 +298,14 @@ if __name__=="__main__":
 
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+
+    import os
+    os.makedirs(f"results/{timestamp}", exist_ok=True)
+
     for o in opt:
         # print(o.as_dict())
-        o.save(f"results/{o.host_ind}_{timestamp}.json")
-        o.save_maps(f"results/HostID{o.host_ind}_{timestamp}.npz")
+        o.save(f"results/{timestamp}/HostID{o.host_ind}.json")
+        o.save_maps(f"results/{timestamp}/HostID{o.host_ind}_value_map.npz")
 
     # Try plotting? Need to modify the animate heatmaps dude from density such that it can take an equal length array of observation (RA,DEC) values...
 

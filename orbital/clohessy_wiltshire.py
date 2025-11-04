@@ -109,11 +109,12 @@ def CW_vectorized_single(state, w, t, i):
     mcwt = 1 - cwt
 
     # Throw if there are bad values 
-    try:
-        np.asarray_chkfinite([state,wt,recw,swt,cwt,mcwt])
-    except:
-        print("failed at ", i)
-        raise
+    for v in [state, wt, recw]:
+        try:
+            np.asarray_chkfinite([v])
+        except:
+            print("[ERROR] Non-finite values in: ", v)
+            raise
 
 
     M = np.array([[4 - 3*cwt, 0, 0, recw*swt, 2*recw*mcwt, 0],
@@ -185,14 +186,18 @@ def test_compare_states(*args):
     assert(testvar)
 
 if __name__=="__main__":
-    # Success
+    # # Success
     # test_compare_states(omeg, np.linspace(1,5000,1000))
 
+    BATCH = True
+
     # Generate initial conditions
-    Nt = 600 # 20 sec samples over 10 minutes
+    Nt = 1000
     # state = np.array([-10, 55, -80, 0.0, 0.0, 0.0])
-    state = np.zeros(6)
-    dt = 1 #seconds
+    state = np.array([r0, rdot0]).flatten()
+
+    # state = np.zeros(6)
+    dt = 20 #seconds
     # ts = np.linspace(1,2000,Nt)
 
     # Generate random maneuvers and random time indices
@@ -205,22 +210,27 @@ if __name__=="__main__":
     print(dvi * dt, " [seconds]")
     
     dvs = np.zeros((Nt,6))
-    dvs[dvi,3:] = dvd[:]
+    for i,j in enumerate(dvi):
+        dvs[j:,3:] += dvd[i]
     print(dvs.shape, dvs.dtype, dvs.sum(axis=0))
 
-    # Generate all states
-    states = np.zeros_like(dvs)
-    states[0] = state
-    for i in range(1,Nt):
-        states[i,:] = CW_vectorized_single(states[i-1]+dvs[i-1], omeg, dt, i)
+    # I think CW functions are actually only valid when not applying delta v, in other words, they are TIME INVARIANT!!!!!!!!
+
+    if BATCH:
+        states = CW_vectorized_batch(state, omeg, np.arange(0.0, Nt, dt))
+
+    # else:
+    #     for i in range(1,Nt):
+    #         # Reason this wasn't working was because the CW function is time invariant and non-recursive like I was doing here
+    #         states[i,:] = CW_vectorized_single(states[i-1]+dvs[i-1], omeg, dt, i)
 
     mask = [~np.any(~np.isfinite(r)) for r in states]
     # print(mask)
     # print(states.shape)
     states = states[mask]
     print(states)
-    # plt.hist(states, bins=100)
-    # plt.show()
+    plt.hist(states, bins=100)
+    plt.show()
     
     # states = states[np.isfinite(states)]
     # plt.hist(states, bins=100)
@@ -232,115 +242,124 @@ if __name__=="__main__":
     # See if we can apply controls to maneuver in 'orbit' around target satellite
     plot_cw(states)
 
-    ############################################################
-    ############################################################
-    # d =0
-    # d_max = 50
-    # stindex = nframes
-    # for i in range(nframes):
-    #     t = dt*i
-    #     if d<d_max:
-    #         r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
-    #         # rdot_vec = CW2(r0, rdot0, omeg, t)[1]
-    #         x = r_vec[0]
-    #         y = r_vec[1]
-    #         z = r_vec[2]
-    #         xdot = rdot_vec[0]
-    #         ydot = rdot_vec[1]
-    #         zdot = rdot_vec[2]
-    #         rdot = [xdot, ydot, zdot]
-    #         d = np.linalg.norm(r_vec)
-    #         ds.append(d)
+    ###########################################################
+    ###########################################################
+
+    ds = []
+    xs = []
+    ys = []
+    zs = []
+
+    d =0
+    d_max = 50
+    stindex = nframes
+    for i in range(nframes):
+        t = dt*i
+        if d<d_max:
+            r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
+            # rdot_vec = CW2(r0, rdot0, omeg, t)[1]
+            x = r_vec[0]
+            y = r_vec[1]
+            z = r_vec[2]
+            xdot = rdot_vec[0]
+            ydot = rdot_vec[1]
+            zdot = rdot_vec[2]
+            rdot = [xdot, ydot, zdot]
+            d = np.linalg.norm(r_vec)
+            ds.append(d)
             
-    #         xs.append(x)
-    #         ys.append(y)
-    #         zs.append(z)
+            xs.append(x)
+            ys.append(y)
+            zs.append(z)
             
-    #         v = np.linalg.norm(rdot_vec)
-    #         stindex = i
+            v = np.linalg.norm(rdot_vec)
+            stindex = i
         
-    # #second manouvre
-    # r0 = [x, y, z]
-    # deltav = [-0.03, 0, 0.02]
-    # for i in range(len(rdot)):
-    #     rdot0[i] = rdot[i]+deltav[i]
+    #second manouvre
+    r0 = [x, y, z]
+    deltav = [-0.03, 0, 0.02]
+    for i in range(len(rdot)):
+        rdot0[i] = rdot[i]+deltav[i]
 
 
-    # for i in range(nframes2):
-    #     t = dt*i
-    #     r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
-    #     x = r_vec[0]
-    #     y = r_vec[1]
-    #     z = r_vec[2]
-    #     xdot = rdot_vec[0]
-    #     ydot = rdot_vec[1]
-    #     zdot = rdot_vec[2]
-    #     rdot = [xdot, ydot, zdot]
-    #     d = np.sqrt(x**2+y**2+z**2)
-    #     ds.append(d)
+    for i in range(nframes2):
+        t = dt*i
+        r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
+        x = r_vec[0]
+        y = r_vec[1]
+        z = r_vec[2]
+        xdot = rdot_vec[0]
+        ydot = rdot_vec[1]
+        zdot = rdot_vec[2]
+        rdot = [xdot, ydot, zdot]
+        d = np.sqrt(x**2+y**2+z**2)
+        ds.append(d)
         
-    #     xs.append(x)
-    #     ys.append(y)
-    #     zs.append(z)
+        xs.append(x)
+        ys.append(y)
+        zs.append(z)
         
-    #     v = np.sqrt(xdot**2+ydot**2+zdot**2)
+        v = np.sqrt(xdot**2+ydot**2+zdot**2)
 
-    # #maonoeuvre 3
+    #maonoeuvre 3
 
-    # r0 = [x, y, z]
-    # deltav = [0, -0.05, 0.03]
-    # for i in range(len(rdot)):
-    #     rdot0[i] = rdot[i]+deltav[i]
+    r0 = [x, y, z]
+    deltav = [0, -0.05, 0.03]
+    for i in range(len(rdot)):
+        rdot0[i] = rdot[i]+deltav[i]
     
 
-    # for i in range(nframes3):
-    #     t = dt*i
-    #     r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
-    #     x = r_vec[0]
-    #     y = r_vec[1]
-    #     z = r_vec[2]
-    #     xdot = rdot_vec[0]
-    #     ydot = rdot_vec[1]
-    #     zdot = rdot_vec[2]
+    for i in range(nframes3):
+        t = dt*i
+        r_vec, rdot_vec = CW2(r0, rdot0, omeg, t)
+        x = r_vec[0]
+        y = r_vec[1]
+        z = r_vec[2]
+        xdot = rdot_vec[0]
+        ydot = rdot_vec[1]
+        zdot = rdot_vec[2]
         
-    #     d = np.sqrt(x**2+y**2+z**2)
-    #     ds.append(d)
+        d = np.sqrt(x**2+y**2+z**2)
+        ds.append(d)
         
-    #     xs.append(x)
-    #     ys.append(y)
-    #     zs.append(z)
+        xs.append(x)
+        ys.append(y)
+        zs.append(z)
         
-    #     v = np.sqrt(xdot**2+ydot**2+zdot**2)
+        v = np.sqrt(xdot**2+ydot**2+zdot**2)
 
-    # xmin = min(xs)
-    # xmax = max(xs)
-    # ymin = min(ys)
-    # ymax = max(ys)
-    # zmin = min(zs)
-    # zmax = max(zs)
-    # rmax = max(ds)
-
-
+    xmin = min(xs)
+    xmax = max(xs)
+    ymin = min(ys)
+    ymax = max(ys)
+    zmin = min(zs)
+    zmax = max(zs)
+    rmax = max(ds)
 
 
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection='3d',xlim = (xmin, xmax), ylim = (ymin, ymax),zlim = (zmin, zmax))
-    # ax.set_xlabel('x')
-    # ax.set_ylabel('y')
-    # ax.set_zlabel('z')  
 
 
-    # frame = 0
-    # while frame < stindex:
-    #     frame +=1
-    #     ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'g', alpha = 0.5, s=1)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d',xlim = (xmin, xmax), ylim = (ymin, ymax),zlim = (zmin, zmax))
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')  
+
+
+    frame = 0
+    while frame < stindex:
+        frame +=1
+        ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'g', alpha = 0.5, s=1)
         
-    # while frame < nframes2+stindex:
-    #     frame += 1
-    #     ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'skyblue', s=1)
+    while frame < nframes2+stindex:
+        frame += 1
+        ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'skyblue', s=1)
         
-    # while frame < nframes3+nframes2+stindex:
-    #     frame += 1
-    #     ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'y', s=1)
+    while frame < nframes3+nframes2+stindex:
+        frame += 1
+        ax.scatter(xs[frame], ys[frame], zs[frame], marker = '.', color = 'y', s=1)
 
-    # plt.show()
+    plt.show()
+
+    # Check equivalence of batch method and CW2 for-each method
+    print("Batch and CW2 match? ", np.allclose(states[:,:3], np.c_[xs, ys, zs][:len(states)]))

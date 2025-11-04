@@ -297,24 +297,31 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     import glob
 
-    # This is our training plot of reward traces per training episode (aka 100 rewards for 100 episodes)
-    for fr in glob.glob('results/reward_traces_*-15.npz'):
-        training_rewards = np.load(fr)['arr_0']
-        print(training_rewards.shape) # should be (# hosts, # episodes)
+    # # This is our training plot of reward traces per training episode (aka 100 rewards for 100 episodes)
+    # for fr in glob.glob('results/reward_traces_*-34.npz'):
+    #     training_rewards = np.load(fr)['arr_0']
+    #     print(training_rewards.shape) # should be (# hosts, # episodes)
 
-        plt.plot(training_rewards.T)
-        plt.legend(labels=range(training_rewards.shape[0]))
-        plt.show()
+    #     plt.plot(training_rewards.T)
+    #     plt.legend(labels=range(training_rewards.shape[0]))
+    #     plt.show()
 
     # These are the evaluation observer records, so a single episode
-    for fj, fhm in zip(glob.glob('results/*-15.json'), glob.glob('results/*-15.npz')):        
+    import sys
+    directory = sys.argv[1].rstrip("/")
+
+    # I need to clean inputs better in my reimplementation this weekend
+    for fj, fhm in zip(sorted(glob.glob(f"{directory}/*.json")), sorted(glob.glob(f"{directory}/*.npz"))):   
         observer_record = json.load(open(fj))
         obs_inds = observer_record['Plan']
         obs_ra = RA.flat[obs_inds]
         obs_dec = DEC.flat[obs_inds]
 
         value = np.load(fhm)['arr_0']
-        animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fhm.split('.')[0]}")
+        print("Value Map Shape", value.shape)
+        print("# of Observations", len(obs_inds))
+
+        animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fj.split('.')[0]}")
 
     # import glob
     # jsons = glob.glob('results/*.json')
