@@ -298,30 +298,159 @@ if __name__=="__main__":
     import glob
 
     # # This is our training plot of reward traces per training episode (aka 100 rewards for 100 episodes)
-    # for fr in glob.glob('results/reward_traces_*-34.npz'):
+    # for fr in glob.glob('results/reward_traces_*-15.npz'):
     #     training_rewards = np.load(fr)['arr_0']
     #     print(training_rewards.shape) # should be (# hosts, # episodes)
 
-    #     plt.plot(training_rewards.T)
-    #     plt.legend(labels=range(training_rewards.shape[0]))
+    #     # Add labels dude
+    #     plt.title(f'Training History: Cumulative Reward Traces per Telescope')
+    #     plt.xlabel('Training Episode #')
+    #     plt.ylabel(r"Episode Reward $R(s' | a',\vec{s})$")
+    #     plt.plot(training_rewards.T.sum(1), alpha=0.5, ls='--')
+    #     plt.plot(training_rewards.T, alpha=0.5)
+    #     plt.legend(labels=["Combined"]+[f"Host {_}" for _ in range(training_rewards.shape[0])])
+    #     plt.tight_layout()
     #     plt.show()
 
-    # These are the evaluation observer records, so a single episode
-    import sys
-    directory = sys.argv[1].rstrip("/")
+    # # These are the evaluation observer records, so a single episode
+    # for fj, fhm in zip(glob.glob('results/*-16.json'), glob.glob('results/*-16.npz')):        
+    #     observer_record = json.load(open(fj))
+    #     obs_inds = observer_record['Plan']
+    #     obs_ra = RA.flat[obs_inds]
+    #     obs_dec = DEC.flat[obs_inds]
 
-    # I need to clean inputs better in my reimplementation this weekend
-    for fj, fhm in zip(sorted(glob.glob(f"{directory}/*.json")), sorted(glob.glob(f"{directory}/*.npz"))):   
+    #     value = np.load(fhm)['arr_0']
+    #     print(value.shape)
+
+    #     # Display aggregated value maps
+    #     valsum = value.sum(-1)
+    #     valavg = value.mean(-1)
+    #     valstd = (value - valavg[...,None]).std(-1)
+    #     valmed = np.median(value, -1)
+    #     fig, axes = plt.subplots(2,2)
+    #     axes.flat[0].imshow(valsum, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+    #     axes.flat[1].imshow(valavg, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+    #     axes.flat[2].imshow(valstd, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+    #     axes.flat[3].imshow(valmed, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+    #     axes.flat[3].scatter(obs_ra, obs_dec, c=np.c_[np.linspace(0,1.,len(obs_ra)), np.ones(len(obs_ra)), np.linspace(0,1.,len(obs_ra))], s=20*4**2, marker='1', capstyle='round')
+    #     # axes.flat[3].scatter(obs_ra, obs_dec, c=, s=20*4**2, marker='1', capstyle='round')
+
+    #     # Add all of the labels and whatnot, formatting everything nicely with latex
+    #     fig.suptitle('Aggregate Target Density Metrics')
+    #     for ax, val in zip(axes.flatten(), ["Summed Target Density", "Mean Target Density", "Zero-Mean Target Density $\\sigma$", "Median Target Density w/ Observation Plan Overlay"]):
+    #         ax.set_title(f"Host-Centered Apparent Geocentric ICRF \n {val}", color='black')
+    #         ax.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+    #         ax.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+    #     plt.show()
+
+    #     # animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fhm.split('.')[0]}")
+
+    ##################################################################################
+    # Version of the above section which just shows the full trajectory on the average density field for simplicity
+    ##################################################################################
+    # These are the evaluation observer records, so a single episode
+    for fj, fhm in zip(glob.glob('results/*-16.json'), glob.glob('results/*-16.npz')):
         observer_record = json.load(open(fj))
         obs_inds = observer_record['Plan']
         obs_ra = RA.flat[obs_inds]
         obs_dec = DEC.flat[obs_inds]
 
         value = np.load(fhm)['arr_0']
-        print("Value Map Shape", value.shape)
-        print("# of Observations", len(obs_inds))
+        print(value.shape)
 
-        animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fj.split('.')[0]}")
+        # Display aggregated value maps
+        valavg = value.mean(-1)
+        valavg /= valavg.max()
+        fig = plt.figure()
+        ax = plt.imshow(valavg, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+        plt.scatter(obs_ra, obs_dec, c=np.c_[np.linspace(0,1.,len(obs_ra)), np.ones(len(obs_ra)), np.linspace(0,1.,len(obs_ra))], s=20*4**2, marker='1', alpha=0.5, capstyle='round')
+
+        # Add all of the labels and whatnot, formatting everything nicely with latex
+        plt.title(f"Host-Centered Apparent Geocentric ICRF \n Average Target Density PDF with Planned Telescope Trajectory (Green $\\rightarrow$ White)", color='black')
+        plt.ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+        plt.xlabel(r"$\delta$ (Declination) [rad]", color='black')
+        cbar = fig.colorbar(ax, label=r'Normalized Average Target Density', shrink=0.7, aspect=20*0.7)
+        plt.tight_layout()
+        plt.show()
+
+        # animate_observation_plan(value, obs_ra, obs_dec, observer_record['EndTimes'], to_disk=True, filename=f"{fhm.split('.')[0]}")
+
+    ##################################################################################
+    # Make grid of average density for sub chunks (5 columns, so ~ length of hm//5, 4 rows (len(observers)))
+    ##################################################################################
+    NUM_CHUNKS = 5
+    JSON = glob.glob('results/*-16.json')
+    HMS = glob.glob('results/*-16.npz')
+    NUM_OBSERVERS = len(JSON)
+
+    from mpl_toolkits.axes_grid1 import ImageGrid
+
+    # Set up figure and image grid
+    fig = plt.figure()
+
+    grid = ImageGrid(fig, 111,
+                    nrows_ncols=(NUM_OBSERVERS, NUM_CHUNKS),
+                    axes_pad=0.15,
+                    label_mode='L',
+                    share_all=True,
+                    cbar_location="right",
+                    cbar_mode="edge", # single = one to rule them all, edge = per row
+                    cbar_size="7%",
+                    cbar_pad=0.15,
+                    )
+    
+    grid.axes_llc.set_xlabel(r"$\delta$ (Declination) [rad]", color='black')
+    grid.axes_llc.set_ylabel(r"$\alpha$ (Right Ascension) [rad]", color='black')
+
+    row = 0
+
+    for fj, fhm in zip(JSON, HMS):        
+        observer_record = json.load(open(fj))
+        obs_inds = observer_record['Plan']
+        obs_ra = RA.flat[obs_inds]
+        obs_dec = DEC.flat[obs_inds]
+
+        value = np.load(fhm)['arr_0']
+        # print(value.shape)
+
+        # Split into chunks (will cover different amount of time for each observer but relative coverage is the same, gets point across)
+        chunk_step = len(obs_inds) // (NUM_CHUNKS) # only using the first 5 chunks in order to avoid indexing weirdness
+        # print(chunk_step)
+
+        for chunk in range(NUM_CHUNKS):
+            # only displaying on the averages here!!!!!!!!
+            inds = slice(chunk * chunk_step, (chunk+1) * chunk_step)
+            # print(inds)
+
+            # Display aggregated value maps and overlaid 
+            valavg = value[...,inds].mean(-1)
+            valavg /= valavg.max() 
+
+            # Might need to change indexing solution if cbar is flat number of total plots
+            im = grid[row*NUM_CHUNKS+chunk].imshow(valavg, cmap='inferno', extent=(0, 2*np.pi, -np.pi/2, np.pi/2), origin='lower')
+            grid[row*NUM_CHUNKS+chunk].scatter(obs_ra[inds], obs_dec[inds], c=np.c_[np.linspace(0,1.,len(obs_ra[inds])), np.ones(len(obs_ra[inds])), np.linspace(0,1.,len(obs_ra[inds]))], s=20*4**2, marker='1', alpha=0.5, capstyle='round')
+
+            if chunk == (NUM_CHUNKS-1):
+                # Might need to change this if cbar is flat number of total plots
+                grid.cbar_axes[row].colorbar(im)
+
+            # Add all of the labels and whatnot, formatting everything nicely with latex
+
+        # Colorbar for row
+        # for cax in grid.cbar_axes:
+        #     cax.axis[cax.orientation].set_label(r'Normalized Average Target Value Map')
+        for cax in grid.cbar_axes:
+            cax.axis[cax.orientation].set_label(r'$\rho_{normed}$')
+
+        row += 1
+
+    # # Single Colorbar
+    # grid[0][0].cax.colorbar(im)
+    # grid[0][0].cax.toggle_label(True)
+
+    plt.suptitle(f"Host-Centered Apparent Geocentric ICRF \n Average Target Density Overlaid with Planned Telescope Trajectory", color='black')
+    plt.show()
+
 
     # import glob
     # jsons = glob.glob('results/*.json')

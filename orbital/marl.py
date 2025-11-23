@@ -587,4 +587,4 @@ if __name__=="__main__":
         policies[o.host_ind].save(f'results/policy_{o.host_ind}_mdpdpg_{timestamp}.v1.ptm')
 
     # print(f"Simulated observation planning took {elapsed / 3600:.3f} [h] to complete a plan for {len(hosts)} hosts spanning {evaltstart.utc_iso()} to {evaltend.utc_iso()}.")
-    print(f"Simulated observation planning took {elapsed / 3600:.3f} [h] to complete a plan for {len(hosts)} hosts spanning {tstart.utc_iso()} to {tend.utc_iso()}.")
+    print(f"Simulated observation planning took {elapsed / 60:.3f} [m] to complete a plan for {len(hosts)} hosts spanning {tstart.utc_iso()} to {tend.utc_iso()}.")
