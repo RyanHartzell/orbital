@@ -18,6 +18,40 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
 
+# Utils
+# Uncertainty update (U0 is just km, dt is expected to be a timedelta object)
+def update_uncertainty(U0, dt, rate=0.1/3600): # rate is 0.1 km/h converted to km/s 
+    return U0 + rate*U0*dt.total_seconds()
+
+# Integration time + slew time
+# def obs_duration(slew, avg_target_distance):
+def obs_duration(slew, slew_rate=np.pi/4, frames=7, integration=1):
+    # For simplicity (slew in radians / slew rate in rad/s) + (frames unitless * integration in s) = duration in s
+    return slew / slew_rate + frames * integration
+
+# Value (observation/collection quality)
+# Target records should just be a list of the same length as the full targets list, but with a dictionary of data stored at each element (essentially per target)
+def compute_reward(t, target_records, access, query_result, max_allowable_unseen=timedelta(hours=0.5)):
+    # Get subset of target record dictionaries
+    targ_recs = target_records[access[:,0]][query_result] # Query result is flattened index w.r.t accessible targets
+
+    # Compute the absolute magnitude uncertainty reduction for all targets
+    # Compute the absolute magnitude change in staleness index for all targets
+    reward = 0.0
+    for tr in targ_recs:
+        dt = timedelta(seconds=(t - tr["last_seen"])) # Timedelta, which I believe is evaluated as seconds
+
+        # 0.1 km is the default reset value for uncertainty
+        # TODO: Change this to our value function for maximizing reductions in uncertainty
+        reward += (update_uncertainty(tr["last_uncertainty"], dt) - 0.1 + 10*(dt > max_allowable_unseen))
+
+    return reward
+
+# Cost (haversine_costs(a, b))
+def compute_cost(current_state_index, new_state_index):
+    return haversine_distances(np.c_[RA.flat[current_state_index],DEC.flat[current_state_index]], np.c_[RA.flat[new_state_index],DEC.flat[new_state_index]])
+
+# Observer class (should technically live in its own module...)
 class Observer:
     def __init__(self, host, host_ind):
         self.host = host
@@ -59,6 +93,8 @@ class Observer:
     def save_maps(self, fname):
         np.savez(fname, np.dstack(self.maps))
 
+######################################################################
+# Beginning of Dec-MCTS implementation
 class MCTSNode:
     def __init__(self, state, parent=None, gamma=0.99):
         self.state = state
@@ -103,13 +139,57 @@ class MCTSNode:
 
         return exploitation + exploration
 
+# Local Planner (Runs on each agent concurrently, hopefully multi-threaded)
+class LocalDecMCTSPlanner:
+    def __init__(self, observer, targets, update_period, schedule_duration, p_comms_dropout=0.5):
+        pass
+
+    def setup(self):
+        return
+
+    def update_belief(self):
+        return
+
+    def compute_density(self):
+        return
+    
+    def interpolate_density(self):
+        # given a time, lookup nearest neighbors and then do bilinear interp on sets to get value/cost
+        return
+    
+    def compute_action_sequence_probs(self):
+        return
+    
+    def step(self):
+        return
+    
+    def reset(self):
+        return
+
+# Global Planner (Simulates the comms between local planners on agents!!!!)
+class GlobalDecMCTSPlanner:
+    def __init__(self):
+        pass
+
+    def setup(self):
+        return
+    
+    def step(self):
+        return
+    
+    def reset(self):
+        return
+
 if __name__=="__main__":
     sats = load_satellites()
 
     import time
-    start = time.perf_counter()
+    start_init = time.perf_counter()
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
     targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
+
+    # Init time:
+    end_init = time.perf_counter() - start_init
