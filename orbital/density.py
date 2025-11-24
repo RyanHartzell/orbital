@@ -125,6 +125,12 @@ def construct_fov_density_map(bt, afov=5.5):
     counts = np.array([len(q) for q in query_results]).reshape(RA.shape)
     return counts / np.sum(counts), query_results
 
+def construct_fov_density_maps(bts, afov=5.5):
+    maps = np.zeros((len(bts), RA.shape, DEC.shape))
+    for i,bt in enumerate(bts):
+        maps[i] = construct_fov_density_map(bt, afov)
+    return maps
+
 # Times should be skyfield or astropy times with a utc_iso() method for formatting
 def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
     fig, ax = plt.subplots()

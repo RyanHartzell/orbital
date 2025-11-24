@@ -19,6 +19,27 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 WORST_CASE_SLEW_PER_ACTION = np.pi
 
 # Utils
+def compute_access(o, targets):
+    t = o.last_observation_end_time
+    host = o.host
+
+    # Get access mask (THIS WE SHOULD ACCELERATE AND PRECOMPUTE!!!)
+    sunlit_access = not_sunlit(t, targets)
+    # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
+
+    range_access = out_of_range(t, host, targets)
+    # print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
+
+    koz_access = in_major_keep_out_zones(t, host, targets)
+    # print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
+
+    # Construct overall access mask (should be SATNUM x TIMESTEP)
+    access = ~sunlit_access * ~range_access * ~koz_access # We can multiply these since any zero value should cause a switch to False
+    # print(f"Total % access across timesteps = {np.sum(access)/access.size * 100.}")
+
+    # Boolean mask for targets, True: Accessible, False: Inaccessible
+    return access
+
 # Uncertainty update (U0 is just km, dt is expected to be a timedelta object)
 def update_uncertainty(U0, dt, rate=0.1/3600): # rate is 0.1 km/h converted to km/s 
     return U0 + rate*U0*dt.total_seconds()
@@ -142,15 +163,28 @@ class MCTSNode:
 # Local Planner (Runs on each agent concurrently, hopefully multi-threaded)
 class LocalDecMCTSPlanner:
     def __init__(self, observer, targets, update_period, schedule_duration, p_comms_dropout=0.5):
-        pass
+        self.o = observer
+        self.targs = targets
 
     def setup(self):
+        # Init tree greedily for first observation, and then build from that node
         return
 
     def update_belief(self):
+        # Using incoming beliefs from other observers (action probs, action chain) update own belief
+
+        # Avg of incoming beliefs, or should update as latest observed for each target out of set of beliefs?
+
         return
 
-    def compute_density(self):
+    # Triggered every update period for a fresh look at densities/values
+    def compute_density(self, times):
+        # This should compute density over time and store time-derivatives for interp
+        for t in times:
+            # Compute apparent RA/DECs
+            # Compute ball-tree
+            # Compute density map
+
         return
     
     def interpolate_density(self):
@@ -158,12 +192,15 @@ class LocalDecMCTSPlanner:
         return
     
     def compute_action_sequence_probs(self):
+        # We need to update these as we explore the tree with best leaf actions, right?
         return
     
     def step(self):
+        # Action selection
         return
     
     def reset(self):
+        # Reset tree state to last known observation for observer
         return
 
 # Global Planner (Simulates the comms between local planners on agents!!!!)
@@ -171,12 +208,15 @@ class GlobalDecMCTSPlanner:
     def __init__(self):
         pass
 
+    # Init all planners greedily
     def setup(self):
         return
-    
+
+    # This should include belief update for our observers/local planners    
     def step(self):
         return
-    
+
+    # Trigger reset across all local planners    
     def reset(self):
         return
 
