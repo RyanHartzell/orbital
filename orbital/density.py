@@ -97,7 +97,7 @@ def reformat_radecrange(apparent_radecrange, ragged=False):
         return np.dstack([ras, decs, ranges])
 
 # Construct BallTree for each timestep
-# Requires 'transposing' the results from the calculate_apparent_radecrange function so we have all ra/dec for all targets grouped per 
+# Requires 'transposing' the results from the calculate_apparent_radecrange function so we have all ra/dec for all targets grouped per time
 def construct_ball_trees(data):
     return [BallTree(np.c_[data[:,t,1], data[:,t,0]], metric='haversine') for t in range(data.shape[1])]
 
@@ -127,9 +127,10 @@ def construct_fov_density_map(bt, afov=5.5):
 
 def construct_fov_density_maps(bts, afov=5.5):
     maps = np.zeros((len(bts), RA.shape, DEC.shape))
+    query_results_vec = [None]*len(bts)
     for i,bt in enumerate(bts):
-        maps[i] = construct_fov_density_map(bt, afov)
-    return maps
+        maps[i], query_results_vec[i] = construct_fov_density_map(bt, afov)
+    return maps, query_results_vec
 
 # Times should be skyfield or astropy times with a utc_iso() method for formatting
 def animate_heatmaps(heatmaps, times, to_disk=False, filename='test'):
