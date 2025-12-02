@@ -345,13 +345,12 @@ class Observer:
             self.extern_belief_map[i] /= self.extern_belief_map[i].sum()
 
     def optimize_belief(self, extern):
-        extern = np.asarray(extern)
-        # extern.shape = [# observers, # times, # targets]
+        # Extern should be list of local belief arrays
         # For each time t
         for i in range(len(self.sample_times)):
             # Aggregate external beliefs (top-k targeting probability vectors)
             # Combine extern belief via product distribution and normalization
-            extern_belief = reduce(np.multiply, extern[:,i,:])
+            extern_belief = reduce(np.multiply, [arr[i] for arr in extern])
             extern_belief[extern_belief < 0] = 0.0 # clip
             extern_belief = extern_belief / extern_belief.sum() # normalize
             self.extern_belief[i] = extern_belief
@@ -557,13 +556,17 @@ class GlobalDecMCTSPlanner:
         # For number of communication rounds (aka 5 to allow convergence?), do chunk of mcts iterations
         for _ in range(nsync):
             # For each observer, start thread to run mcts search function (aka mcts_iter in loop)
-            with threadpool as tp: # pseudo code
+            # with threadpool as tp: # pseudo code
+
+            for o in self.observers:
                 # Do mcts_iter
                 for i in range(niter):
-                    #
-
+                    o.mcts_iter()
+                o.compute_local_belief(self.targets)
 
             # Join threads, accumulate beliefs, update beliefs on each observer
+            for o in (so:=set(self.observers)):
+                o.optimize_belief([other.local_belief for other in so])
 
             # Reset trees?
 
