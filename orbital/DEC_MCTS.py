@@ -289,10 +289,12 @@ class Observer:
 
         # RH: EPSILON-GREEDY ON BELIEF FOR NOW!!!
         # get new_state_index via epsilon-greedy global argmax sampling, or just straight up random sample from belief map?
-        action_inds = np.ravel_multi_index(global_argmax(self.local_belief_map[nn_ind], 0.8), self.local_belief_map[nn_ind].shape)
-
+        # action_inds = np.ravel_multi_index(global_argmax(self.local_belief_map[nn_ind], 0.8), self.local_belief_map[nn_ind].shape)
         # Choose a new index from the best inds
-        new_state_index = np.random.choice(action_inds) # Or randomly select np.random.choice(action_inds)
+        # new_state_index = np.random.choice(action_inds) # Or randomly select np.random.choice(action_inds)
+
+        # Truly random sample using belief map as probability
+        new_state_index = np.random.choice(np.arange(self.local_belief_map[nn_ind].size), p=self.local_belief_map[nn_ind].flat)
 
         # Form ActionStatePair to transition from old state to new state
         asp = ActionStatePair(
@@ -567,16 +569,12 @@ class GlobalDecMCTSPlanner:
             # Join threads, accumulate beliefs, update beliefs on each observer
             for o in (so:=set(self.observers)):
                 o.optimize_belief([other.local_belief for other in so])
+                o.compute_belief_maps()
 
-            # Reset trees?
+                # Reset trees?
 
+        # RH: SAVE BEST PATHS FOR EACH OBSERVER AND SAVE ANY AND ALL METADATA LIKE BELIEF MAPS!!!!!!!!!
 
-        # RH: FOR NOW WE'RE JUST RUNNING A SINGLE TIME HORIZON WHERE EACH STEP IS MCTS_ITER FOLLOWED BY BELIEF COMMS AND UPDATE!!!!!
-
-        # BEFORE RETURNING, UPDATE ALL TIMING VARIABLES!!! Namely planning_window_end, which is used to check termination of MCTS paths
-        # RH: Basically add DT to planning window start and end
-        # self.planning_window_start += self.DT
-        # self.planning_window_end += self.DT
 
         return
     
@@ -586,23 +584,24 @@ class GlobalDecMCTSPlanner:
             o.reset()
 
 if __name__=="__main__":
-    obs = Observer(host = None, host_ind=0)
-
-    for i in range(1000):
-        r = obs.mcts_iter()
-
-    print(obs.get_best_action_sequence())
+    from datetime import datetime
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
-    # sats = load_satellites()
+    sats = load_satellites()
 
-    # import time
-    # start_init = time.perf_counter()
+    import time
+    start_init = time.perf_counter()
 
-    # # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
-    # hosts = sats[0:4]
-    # targets = sats[4:100] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
+    hosts = sats[0:4]
+    targets = sats[4:100] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
+    # Set up global planner
+    observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
 
-    # # Init time:
-    # end_init = time.perf_counter() - start_init
+    gp = GlobalDecMCTSPlanner(datetime.now())
+    gp.setup(observers, targets)
+    gp.run()
+
+    # Init time:
+    end_init = time.perf_counter() - start_init
