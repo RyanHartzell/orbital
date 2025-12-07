@@ -6,7 +6,7 @@ from access import in_major_keep_out_zones, not_sunlit, out_of_range
 from sklearn.metrics.pairwise import haversine_distances
 import numpy as np
 # from skimage.filters import peak_local_max 
-from datetime import timedelta
+from datetime import timedelta, timezone
 from astropy import units as u
 from skyfield.api import load
 import json
@@ -15,6 +15,7 @@ import math
 import random
 from functools import reduce
 from kldiv_maximizer import maximize_kldiv
+import copy
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -23,6 +24,8 @@ np.random.seed(42) # We'll want to comment out once done debugging
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
 MAX_DEPTH = 100 # SMW : Adjust plannign horizion 
+
+ts = load.timescale()
 
 class MCTSNode:
     def __init__(self, state = None, parent=None, gamma=0.99, depth = 0):
@@ -104,13 +107,21 @@ def compute_access(o, t, targets):
     host = o.host
 
     # Get access mask (THIS WE SHOULD ACCELERATE AND PRECOMPUTE!!!)
-    sunlit_access = not_sunlit(t, targets)
+    print(t)
+    if isinstance(t, datetime):
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        t_skyfield = ts.from_datetime(t)
+    else:
+        # It might already be a Skyfield time object or other format
+        t_skyfield = t
+    sunlit_access = not_sunlit(t_skyfield, targets)
     # print(f"% access [SUNLIT] = {np.sum(~sunlit_access)/sunlit_access.size * 100.}")
 
-    range_access = out_of_range(t, host, targets)
+    range_access = out_of_range(t_skyfield, host, targets)
     # print(f"% access [IN-RANGE] = {np.sum(~range_access)/range_access.size * 100.}")
 
-    koz_access = in_major_keep_out_zones(t, host, targets)
+    koz_access = in_major_keep_out_zones(t_skyfield, host, targets)
     # print(f"% access [NOT-IN-KOZ] = {np.sum(~koz_access)/koz_access.size * 100.}")
 
     # Construct overall access mask (should be SATNUM x TIMESTEP)
@@ -371,6 +382,7 @@ class Observer:
 
         for i,t in enumerate(self.sample_times):
             # Compute access
+            t = ts.from_datetime(t)
             self.access[i] = compute_access(self, t, targets)
 
             # # Calculate apparent ra, dec, ranges relative to host state at each time t
@@ -425,8 +437,35 @@ class Observer:
         if node.is_terminal:
             return 0.0
         
-        # TODO: This must be updated to simulate via epsilon-greedy, random belief-driven, or random uncertainty-biased belief-driven action sampling "policies"
-        return np.random.uniform(0, 1)
+        # Perform rollout until either we exceed the planning horizion or depth of 10
+        cumulative_reward = 0.0
+        curr_state_pair = node.state
+        rollout_depth = 0
+        max_rollout_depth = 10
+
+        for i in range(max_rollout_depth):
+            if curr_state_pair.end_time >= self.planning_window_end:
+                break
+            tmp_node = MCTSNode(
+                state=curr_state_pair,
+                parent=None,
+                depth=node.depth + i
+            )
+            # Choose action based on the temp nod e
+            next_asp = self.choose_action(tmp_node)
+
+            # Calculate reward TODO: we can change this up maybe pass in diff 
+            t_idx = self.find_nearest(next_asp.start_time, self.sample_times)
+            step_reward = 0.0
+            if t_idx < len(self.density_maps):
+                step_reward = self.density_maps[t_idx].flat[next_asp.action.end_idx]
+            
+            cummulative_reward += (node.gamma ** i) * step_reward
+
+            # Update state for the next iteration
+            curr_state_pair = next_asp
+
+        return cumulative_reward
     
     def backpropagate(self, path, reward):
         # Discounted backip each step we apply a discount
@@ -584,7 +623,7 @@ class GlobalDecMCTSPlanner:
             o.reset()
 
 if __name__=="__main__":
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
     sats = load_satellites()
@@ -599,7 +638,7 @@ if __name__=="__main__":
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
 
-    gp = GlobalDecMCTSPlanner(datetime.now())
+    gp = GlobalDecMCTSPlanner(datetime.now(timezone.utc))
     gp.setup(observers, targets)
     gp.run()
 

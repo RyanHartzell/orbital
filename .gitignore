@@ -131,3 +131,6 @@ dmypy.json
 
 # MISC
 orbital/results/
+
+.vscode
+de421.bsp
