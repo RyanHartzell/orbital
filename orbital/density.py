@@ -9,7 +9,7 @@ from sklearn.neighbors import BallTree
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import seaborn as sns
-
+from pathlib import Path
 __all__=(
     "SCALE",
     "RA",
@@ -33,9 +33,16 @@ SCALE = 1
 RA,DEC = np.meshgrid(np.linspace(0,2*np.pi,int(360*SCALE+1)), np.linspace(-np.pi/2, np.pi/2, int(180*SCALE+1)))
 
 # Skyfield related stuff which we'll use as a basis for the new app (no more poliastro!!!)
-def load_satellites():
-    r = httpx.get("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json")
-    data = json.loads(r.content)
+def load_satellites(fname = None, saveFile= False):
+    if fname: 
+            with open(fname, 'r') as f:
+                data = json.load(f)
+    else:
+        r = httpx.get("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json")
+        if saveFile: 
+            Path(saveFile).write_bytes(r.content)
+        data = json.loads(r.content)
+
     ts = load.timescale()
     sats = [EarthSatellite.from_omm(ts, fields) for fields in data]
     print('Loaded', len(sats), 'satellites')
@@ -123,6 +130,7 @@ def construct_fov_density_map(bt, afov=5.5):
     # Get list of numpy arrays of indices at each query point (basically the flattened index of RA or DEC)
     query_results = bt.query_radius(np.c_[DEC.flat, RA.flat], np.deg2rad(afov/2)) # list of numpy arrays I believe?
     counts = np.array([len(q) for q in query_results]).reshape(RA.shape)
+    #print(query_results[np.where(counts.flat)])
     return counts / np.sum(counts), query_results
 
 def construct_fov_density_maps(bts, afov=5.5):

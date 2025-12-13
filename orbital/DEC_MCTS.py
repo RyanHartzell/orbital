@@ -1,12 +1,10 @@
-"""
-This uses all our wonderful access and density calculations to create a dec-mcts 
-"""
+"""This uses all our wonderful access and density calculations to create a dec-mcts"""
 from density import *
 from access import in_major_keep_out_zones, not_sunlit, out_of_range
 from sklearn.metrics.pairwise import haversine_distances
 import numpy as np
 # from skimage.filters import peak_local_max 
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from astropy import units as u
 from skyfield.api import load
 import json
@@ -16,6 +14,7 @@ import random
 from functools import reduce
 from kldiv_maximizer import maximize_kldiv
 import copy
+import matplotlib.pyplot as plt 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -107,7 +106,6 @@ def compute_access(o, t, targets):
     host = o.host
 
     # Get access mask (THIS WE SHOULD ACCELERATE AND PRECOMPUTE!!!)
-    print(t)
     if isinstance(t, datetime):
         if t.tzinfo is None:
             t = t.replace(tzinfo=timezone.utc)
@@ -290,13 +288,36 @@ class Observer:
 
     ######################################################################
     # Beginning of Dec-MCTS implementation
+    def init_belief(self, targets):
+
+        num_times = len(self.sample_times)
+        num_targets = len(targets)
+
+        # Each target has probability 1/N
+        self.local_belief = np.full((num_times, num_targets), 1.0 / num_targets)
+
+        self.extern_belief = np.full((num_times, num_targets), 1.0 / num_targets)
+
+        if self.density_maps is None:
+            raise ValueError("Density maps must be computed before initializing belief.")
+        
+        # Create list of zero arrays matching the shape of density maps
+        self.local_belief_map = [np.zeros_like(m) for m in self.density_maps]
+        self.extern_belief_map = [np.zeros_like(m) for m in self.density_maps]
+
+        self.compute_belief_maps()
 
     # Select an action given state
     def choose_action(self, node):
         # Here we'll sample from local belief map given node's observation end_time as our new start
 
-        # find nearest local belief map
-        nn_ind = self.find_nearest(node.state.end_time, self.sample_times)
+        utc_sample_times = [
+        ts.from_datetime(dt) for dt in self.sample_times
+        ]
+
+        # Nearest index lookup
+        nn_ind = self.find_nearest(node.state.end_time, utc_sample_times)
+
 
         # RH: EPSILON-GREEDY ON BELIEF FOR NOW!!!
         # get new_state_index via epsilon-greedy global argmax sampling, or just straight up random sample from belief map?
@@ -332,17 +353,23 @@ class Observer:
 
         # Using subsets of observations for each time range, compute probabilities over targets by the frequency at which they show up (given state and corresponding self.density query record)
         self.local_belief = np.zeros((len(self.sample_times), len(targets)))
+        utc_sample_times = [
+        ts.from_datetime(dt) for dt in self.sample_times
+        ]
         for node in path:
-            nn = self.find_nearest(node.state.end_time, self.sample_times)
-            qr = self.density[nn][node.state.target]
-            self.local_belief[nn][self.access[nn][:,0]][qr] += 1 # I think here we'd also divide by the number of paths we're drawing from aka "k"
-        
+            nn = self.find_nearest(node.state.end_time, utc_sample_times)
+            qr = self.density[nn][node.state.state.target]
+            #self.local_belief[nn][self.access[nn][:,0]][qr] += 1 # I think here we'd also divide by the number of paths we're drawing from aka "k"
+            a = self.local_belief[nn][self.access[nn][:,0]]
+            a[qr] = a[qr] + 1
+            self.local_belief[nn][self.access[nn][:,0]] = a
+            b = self.local_belief[nn][self.access[nn][:,0]][qr]
         for lb in self.local_belief:
             # Check for rare case of zeros (might happen with non-terminal paths or finely sampled times)
             if np.isclose(s:=lb.sum(),0.0):
                 lb[:] = 1.0/lb.size
             lb /= s # Normalize
-
+    '''
     def compute_belief_maps(self):
         # Using targeting belief and density lookup, aggregate into spatial map at each time t, which will be used for action selection
         self.local_belief_map = [np.zeros_like(self.density_maps[i])]*len(self.sample_times)
@@ -355,8 +382,29 @@ class Observer:
                 self.extern_belief_map[i].flat[j] += np.sum(self.extern_belief[i][self.access[i][:,0]][qr])
             # Normalize!
             self.local_belief_map[i] /= self.local_belief_map[i].sum()
-            self.extern_belief_map[i] /= self.extern_belief_map[i].sum()
+            self.extern_belief_map[i] /= self.extern_belief_map[i].sum()    
+    '''
+    def compute_belief_maps(self):
+        # Using targeting belief and density lookup, aggregate into spatial map at each time t, which will be used for action selection
+        self.local_belief_map = [np.zeros_like(m) for m in self.density_maps]
+        self.extern_belief_map = [np.zeros_like(m) for m in self.density_maps]
 
+        for i in range(len(self.local_belief)):
+            # For all queries across all belief times
+            for j,qr in enumerate(self.density[i]):
+                self.local_belief_map[i].flat[j] += np.sum(self.local_belief[i][self.access[i][:,0]][qr])
+                self.extern_belief_map[i].flat[j] += np.sum(self.extern_belief[i][self.access[i][:,0]][qr])
+            # Normalize!
+            if np.sum(self.local_belief_map[i]) > 0:
+                self.local_belief_map[i] /= self.local_belief_map[i].sum()
+            else: # Safety for all zero map
+                self.local_belief_map[i] = np.full_like(self.local_belief_map[i], 1.0 / self.local_belief_map[i].size)
+                
+            if np.sum(self.extern_belief_map[i]) > 0:
+                self.extern_belief_map[i] /= self.extern_belief_map[i].sum()
+            else: # Safety for all zero map
+                self.extern_belief_map[i] = np.full_like(self.extern_belief_map[i], 1.0 / self.extern_belief_map[i].size)
+    
     def optimize_belief(self, extern):
         # Extern should be list of local belief arrays
         # For each time t
@@ -393,6 +441,10 @@ class Observer:
 
             # Calculate new value map using explicit radius_query method (not KDE, since we want total value based on target indices)
             self.density_maps[i], self.density[i] = construct_fov_density_map(bt, self.afov)
+            #print(f"Post:{self.density[i][np.where(self.density_maps[i].flat)]}")
+            #print("t")
+            #plt.imshow(self.density_maps[i], cmap="inferno")
+            #plt.show()
     
     @staticmethod
     def find_nearest(t, times):
@@ -444,23 +496,26 @@ class Observer:
         max_rollout_depth = 10
 
         for i in range(max_rollout_depth):
-            if curr_state_pair.end_time >= self.planning_window_end:
+            if curr_state_pair.end_time.tt >= ts.from_datetime(self.planning_window_end).tt:
                 break
             tmp_node = MCTSNode(
                 state=curr_state_pair,
                 parent=None,
                 depth=node.depth + i
             )
-            # Choose action based on the temp nod e
+            # Choose action based on the temp node
             next_asp = self.choose_action(tmp_node)
 
             # Calculate reward TODO: we can change this up maybe pass in diff 
-            t_idx = self.find_nearest(next_asp.start_time, self.sample_times)
+            utc_sample_times = [
+            ts.from_datetime(dt) for dt in self.sample_times
+            ]
+            t_idx = self.find_nearest(next_asp.start_time, utc_sample_times)
             step_reward = 0.0
             if t_idx < len(self.density_maps):
-                step_reward = self.density_maps[t_idx].flat[next_asp.action.end_idx]
+                step_reward = np.max(self.density_maps[t_idx])
             
-            cummulative_reward += (node.gamma ** i) * step_reward
+            cumulative_reward += (node.gamma ** i) * step_reward
 
             # Update state for the next iteration
             curr_state_pair = next_asp
@@ -502,7 +557,7 @@ class Observer:
             return
 
         # Use end_time on ActionStatePair object, since that has end_time calculated via: end_time = parent.end_time + slew duration + observation duration = ActionStatePair.end_time
-        if node.state.end_time > self.planning_window_end:
+        if node.state.end_time > ts.from_datetime(self.planning_window_end):
             node.is_terminal = True
     
     def get_best_action_sequence(self, mode="duct", k=1):
@@ -585,7 +640,7 @@ class GlobalDecMCTSPlanner:
             o.init_belief(self.targets)
 
             # Choose initial pointing greedily
-            o.greedy_init(self.targets)
+            o.greedy_init(ts.from_datetime(self.planning_window_start), self.targets)
 
         # Set up target records?
         # Init target records
@@ -593,7 +648,7 @@ class GlobalDecMCTSPlanner:
         # self.target_records = np.asarray([{"last_seen": self.planning_window_start, "last_uncertainty": 1.0} for _ in targets])
 
     # This should include belief update for our observers/local planners    
-    def run(self, nsync=10, niter=1000):
+    def run(self, nsync=10, niter=100):
         # For number of communication rounds (aka 5 to allow convergence?), do chunk of mcts iterations
         for _ in range(nsync):
             # For each observer, start thread to run mcts search function (aka mcts_iter in loop)
@@ -604,11 +659,57 @@ class GlobalDecMCTSPlanner:
                 for i in range(niter):
                     o.mcts_iter()
                 o.compute_local_belief(self.targets)
-
+            '''                
+            plt.plot(range(len(self.observers[0].local_belief[0])),self.observers[0].local_belief[0], label = "Obs 1")
+            plt.plot(range(len(self.observers[1].local_belief[0])),self.observers[1].local_belief[0], label = "Obs 2")
+            plt.plot(range(len(self.observers[2].local_belief[0])),self.observers[2].local_belief[0], label = "Obs 3")
+            plt.plot(range(len(self.observers[3].local_belief[0])),self.observers[3].local_belief[0], label = "Obs 4")
+            plt.legend()
+            plt.show()
+            '''
             # Join threads, accumulate beliefs, update beliefs on each observer
             for o in (so:=set(self.observers)):
-                o.optimize_belief([other.local_belief for other in so])
+                
+                o.optimize_belief([other.local_belief for other in (so - {o})])
+                '''
+                plt.ion()
+                plt.title("pre Local")
+                for y in range(len(o.local_belief)):
+                    plt.imshow(o.local_belief_map[y], cmap= "inferno")
+                    plt.pause(0.25)
+                    plt.cla()
+                    #plt.show()
+                plt.ioff()
+                plt.ion()
+                plt.title("pre External")
+                for y in range(len(o.local_belief)):
+                    plt.imshow(o.extern_belief_map[y], cmap= "inferno")
+                    plt.pause(0.25)
+                    plt.cla()
+                    #plt.show()
+                plt.ioff()
+                '''
                 o.compute_belief_maps()
+                '''
+                plt.ion()
+                plt.title("Post Internal")
+                for y in range(len(o.local_belief)):
+                    plt.imshow(o.local_belief_map[y], cmap= "inferno")
+                
+                    plt.pause(0.25)
+                    plt.cla()
+                    #plt.show()
+                plt.ioff()
+
+                plt.ion()
+                plt.title("Post External")
+                for y in range(len(o.local_belief)):
+                    plt.imshow(o.extern_belief_map[y], cmap= "inferno")
+                    plt.pause(0.25)
+                    plt.cla()
+                    #plt.show()
+                plt.ioff()
+                '''
 
                 # Reset trees?
 
@@ -626,14 +727,14 @@ if __name__=="__main__":
     from datetime import datetime, timezone
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
-    sats = load_satellites()
+    sats = load_satellites(fname="tmp.json")
 
     import time
     start_init = time.perf_counter()
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:100] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:1000] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
@@ -642,5 +743,19 @@ if __name__=="__main__":
     gp.setup(observers, targets)
     gp.run()
 
-    # Init time:
     end_init = time.perf_counter() - start_init
+    print(end_init)
+    
+    plt.ion()
+    fig, axes = plt.subplots(2, 2)
+
+    for i in range(len(observers[0].sample_times)):
+        axes[0][0].imshow(observers[0].local_belief_map[i], cmap="inferno")
+        axes[0][1].imshow(observers[1].local_belief_map[i], cmap="inferno")
+        axes[1][0].imshow(observers[2].local_belief_map[i], cmap="inferno")
+        axes[1][1].imshow(observers[3].local_belief_map[i], cmap="inferno")
+        plt.pause(0.5)
+
+    plt.ioff()
+
+    #plt.show()
