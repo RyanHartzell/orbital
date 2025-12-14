@@ -15,6 +15,7 @@ from functools import reduce
 from kldiv_maximizer import maximize_kldiv
 import copy
 import matplotlib.pyplot as plt 
+from itertools import chain
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -26,8 +27,12 @@ MAX_DEPTH = 100 # SMW : Adjust plannign horizion
 
 ts = load.timescale()
 
+import weakref
+from collections import defaultdict
+
 class MCTSNode:
-    def __init__(self, state = None, parent=None, gamma=0.99, depth = 0):
+    registry = defaultdict(weakref.WeakSet)
+    def __init__(self, state = None, parent=None, gamma=0.99, depth=0, tree_id=None):
         self.state = state
         self.parent = parent
         self.children = {}
@@ -49,6 +54,12 @@ class MCTSNode:
         # Depth and terminal state if we force a terminal statet
         self.depth = depth 
         self.is_terminal = False
+
+        # Action-chain tracking, filtering for leaf evals
+        self.tree_id = tree_id
+
+        # Register each instance
+        __class__.registry[self.tree_id].add(self)
     
     def decay(self): # this should be called every global timestep even if the node is not visited
         # Apply a decay when the node is not visited 
@@ -86,7 +97,8 @@ class MCTSNode:
             state=next_state, 
             parent = self, 
             gamma = self.gamma,
-            depth=self.depth + 1
+            depth=self.depth + 1,
+            tree_id=self.tree_id
         )
         self.children[action] = node
         return node 
@@ -96,9 +108,56 @@ class MCTSNode:
             self.is_terminal = True
             return True
         return False
+
+    @staticmethod
+    def get_path_from_root(node):
+        path = [node]
+        n = node
+        while n.parent:
+            n = n.parent
+            path.append(n)    
+        return list(reversed(path)) # root -> self
     
+    @staticmethod
+    def score(path):
+        # Using actual average reward of path
+        return sum([n.value / n.visits for n in path])
+
     def __repr__(self):
-        return f"MCTSNode[state={self.state}, children={len(self.children)}]"
+        return f"MCTSNode[tree={self.tree_id}, state={self.state}, children={len(self.children)}]"
+
+    # Class methods    
+    @classmethod
+    def get_all_leafs(cls, tid=None):
+        leafs = []
+        if tid is not None:
+            # Nodes associated with a specific tree id
+            nodes = cls.registry[tid]
+        else:
+            # All nodes
+            nodes = list(chain.from_iterable(cls.registry.values()))
+
+        for n in nodes:
+            if (n.children is not None) and (len(n.children) == 0):
+                leafs.append(n)
+        return leafs
+    
+    @classmethod
+    def get_topk_paths(cls, tid, k=1):
+        # For a given tree, find the best k paths (branches through tree, action-state sequences in context of MCTS)
+        if tid not in cls.registry.keys():
+            return None
+        
+        # Get leafs in tree
+        leafs = cls.get_all_leafs(tid)
+        # Get paths
+        paths = [cls.get_path_from_root(n) for n in leafs]
+        # Get score for root->leaf for all leafs
+        scores = [cls.score(p) for p in paths]
+        # Sort paths
+        paths = [paths[i] for i in np.argsort(scores)]
+        # Return top k paths
+        return list(reversed(paths[-k:])) # best path first
     
 # Utils
 def compute_access(o, t, targets):
@@ -200,7 +259,7 @@ class Observer:
 
         # I should probably just build these from the observations in the chosen best path through our tree now (aka the plan)
         self.last_observation_end_time = None
-        self.plan = [] # Contains flat indices into RA/DEC meshgrid (from density module) *OR* target_indices
+        self.plan = [] # Contains flat indices into RA/DEC meshgrid (from density module)
         self.obs_starts = []
         self.obs_ends = []
         self.reward = [] # Size of plan-1, should be all associated rewards for actions
@@ -232,6 +291,18 @@ class Observer:
 
     def __lt__(self, other):
         return self.last_observation_end_time < other.last_observation_end_time
+    
+    # This should update all plans, obs times, rewards, costs
+    def results(self):
+        # Get best plan aka action sequence using exploitation only
+        #   aka. 1) look at all leaf nodes 2) evaluate each path's total duct exploitation ONLY reward 3) select largest total discounted reward
+        r = 0.0
+        l_i = None # This will be the index of the best leaf leading to best plan
+        for l in MCTSNode.leafs:
+            pass
+
+        # Update: plan [states], slew start and ends, obs start and ends, cumulative rewards, cumulative costs
+        
 
     def as_dict(self):
         return {
@@ -506,13 +577,14 @@ class Observer:
             # Choose action based on the temp node
             next_asp = self.choose_action(tmp_node)
 
-            # Calculate reward TODO: we can change this up maybe pass in diff 
+            # RH: TODO! USE OUR REWARD FUNCTION FROM UP TOP HERE!!!!!!!
             utc_sample_times = [
             ts.from_datetime(dt) for dt in self.sample_times
             ]
             t_idx = self.find_nearest(next_asp.start_time, utc_sample_times)
             step_reward = 0.0
             if t_idx < len(self.density_maps):
+                # RH: This should use the next_asp to calculate slew+observation specific reward, not density I think
                 step_reward = np.max(self.density_maps[t_idx])
             
             cumulative_reward += (node.gamma ** i) * step_reward
@@ -528,6 +600,8 @@ class Observer:
             node.update_visit(reward)
             if node.parent is None:
                 continue
+
+            # RH: I think this is effectively applying the decay method
             node.disc_visits *= node.gamma
             node.disc_value  *= node.gamma
 
@@ -714,7 +788,7 @@ class GlobalDecMCTSPlanner:
                 # Reset trees?
 
         # RH: SAVE BEST PATHS FOR EACH OBSERVER AND SAVE ANY AND ALL METADATA LIKE BELIEF MAPS!!!!!!!!!
-
+        self.results = {obs: plan for obs,plan in zip(observers, [o.plan for o in observers])}
 
         return
     
@@ -739,12 +813,17 @@ if __name__=="__main__":
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
 
+    print(f"Starting initialization... [{time.perf_counter()}]")
     gp = GlobalDecMCTSPlanner(datetime.now(timezone.utc))
     gp.setup(observers, targets)
+    end_init = time.perf_counter() - start_init
+    print("Elapsed init time: ", end_init)
+
+    print(f"Starting planning... [{time.perf_counter()}]")
     gp.run()
 
-    end_init = time.perf_counter() - start_init
-    print(end_init)
+    end_planning = time.perf_counter() - start_init
+    print("Elapsed planning time: ", end_planning)
     
     plt.ion()
     fig, axes = plt.subplots(2, 2)
@@ -759,3 +838,5 @@ if __name__=="__main__":
     plt.ioff()
 
     #plt.show()
+
+    # Save results!!!
