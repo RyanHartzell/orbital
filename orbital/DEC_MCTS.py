@@ -3,7 +3,7 @@ from density import *
 from access import in_major_keep_out_zones, not_sunlit, out_of_range
 from sklearn.metrics.pairwise import haversine_distances
 import numpy as np
-# from skimage.filters import peak_local_max 
+# from skimage.filters import peak_local_max
 from datetime import datetime, timedelta, timezone
 from astropy import units as u
 from skyfield.api import load
@@ -14,8 +14,9 @@ import random
 from functools import reduce
 from kldiv_maximizer import maximize_kldiv
 import copy
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 from itertools import chain
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -23,7 +24,7 @@ np.random.seed(42) # We'll want to comment out once done debugging
 
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
-MAX_DEPTH = 100 # SMW : Adjust plannign horizion 
+MAX_DEPTH = 100 # SMW : Adjust plannign horizion
 
 ts = load.timescale()
 
@@ -37,7 +38,7 @@ class MCTSNode:
         self.parent = parent
         self.children = {}
 
-        # Discount factor 
+        # Discount factor
         self.gamma = gamma
 
         #Exploration Constant
@@ -52,7 +53,7 @@ class MCTSNode:
         self.value = 0.0
 
         # Depth and terminal state if we force a terminal statet
-        self.depth = depth 
+        self.depth = depth
         self.is_terminal = False
 
         # Action-chain tracking, filtering for leaf evals
@@ -60,23 +61,23 @@ class MCTSNode:
 
         # Register each instance
         __class__.registry[self.tree_id].add(self)
-    
+
     def decay(self): # this should be called every global timestep even if the node is not visited
-        # Apply a decay when the node is not visited 
+        # Apply a decay when the node is not visited
         self.disc_visits *= self.gamma # C_t(s)
         self.disc_value *= self.gamma # sum
-    
+
     def update_visit(self, reward):
         # Apply the discounted update when we visit the node
         self.disc_visits = self.gamma * self.disc_visits + 1
         self.disc_value = self.gamma * self.disc_value + reward
         self.visits += 1
         self.value += reward
-    
+
     def d_uct(self, parent):
         # Safety: avoid divide by 0 early in search
         if parent.disc_visits == 0 or self.disc_visits == 0:
-            return np.inf # High number since we want to ensure unvisited nodes are prioritized to be visited 
+            return np.inf # High number since we want to ensure unvisited nodes are prioritized to be visited
 
         exploitation = self.disc_value / self.disc_visits
         parent_visits_safe = max(parent.disc_visits, 1.0) # Clamp input for log to be at least 1
@@ -91,18 +92,18 @@ class MCTSNode:
         if not self.children:
             return None
         return max(self.children.values(), key = lambda child: child.d_uct(self))
-        
+
     def add_child(self, action, next_state):
         node = MCTSNode(
-            state=next_state, 
-            parent = self, 
+            state=next_state,
+            parent = self,
             gamma = self.gamma,
             depth=self.depth + 1,
             tree_id=self.tree_id
         )
         self.children[action] = node
-        return node 
-    
+        return node
+
     def check_terminal(self):
         if self.depth >= MAX_DEPTH:
             self.is_terminal = True
@@ -115,18 +116,18 @@ class MCTSNode:
         n = node
         while n.parent:
             n = n.parent
-            path.append(n)    
+            path.append(n)
         return list(reversed(path)) # root -> self
-    
+
     @staticmethod
     def score(path):
         # Using actual average reward of path
-        return sum([n.value / n.visits for n in path])
+        return sum([n.value / n.visits if n.visits > 0 else 0.0 for n in path])
 
     def __repr__(self):
         return f"MCTSNode[tree={self.tree_id}, state={self.state}, children={len(self.children)}]"
 
-    # Class methods    
+    # Class methods
     @classmethod
     def get_all_leafs(cls, tid=None):
         leafs = []
@@ -141,15 +142,16 @@ class MCTSNode:
             if (n.children is not None) and (len(n.children) == 0):
                 leafs.append(n)
         return leafs
-    
+
     @classmethod
     def get_topk_paths(cls, tid, k=1):
         # For a given tree, find the best k paths (branches through tree, action-state sequences in context of MCTS)
         if tid not in cls.registry.keys():
-            return None
-        
+            return []
+
         # Get leafs in tree
         leafs = cls.get_all_leafs(tid)
+        print(f"LEAFS FOR TREE {tid}: ", leafs)
         # Get paths
         paths = [cls.get_path_from_root(n) for n in leafs]
         # Get score for root->leaf for all leafs
@@ -158,7 +160,7 @@ class MCTSNode:
         paths = [paths[i] for i in np.argsort(scores)]
         # Return top k paths
         return list(reversed(paths[-k:])) # best path first
-    
+
 # Utils
 def compute_access(o, t, targets):
     # t = o.last_observation_end_time
@@ -189,7 +191,7 @@ def compute_access(o, t, targets):
     return access
 
 # Uncertainty update (U0 is just km, dt is expected to be a timedelta object)
-def update_uncertainty(U0, dt, rate=0.1/3600): # rate is 0.1 km/h converted to km/s 
+def update_uncertainty(U0, dt, rate=0.1/3600): # rate is 0.1 km/h converted to km/s
     return U0 + rate*U0*dt.total_seconds()
 
 # find global maximum value indices
@@ -197,7 +199,7 @@ def global_argmax(arr, thresh=None):
     if thresh is None:
         # True greediness
         return np.where(np.isclose(arr, arr.max()))
-    
+
     else:
         # Stochastic behavior
         return np.where(arr > (thresh * arr.max()))
@@ -243,7 +245,7 @@ class Observation:
         integration_and_readout = np.random.uniform(0.01, 5) #100fps is floor
         exposures = np.ceil(np.random.uniform(3, 17))
         return cls(target, integration_and_readout, exposures)
-    
+
 class Slew:
     def __init__(self, start_idx, end_idx, slew_rate=np.pi/4):
         self.duration = timedelta(seconds=compute_cost(start_idx, end_idx)[0,0] / slew_rate)
@@ -286,30 +288,37 @@ class Observer:
         self.density = None
         self.density_maps = None
 
-        self.root = MCTSNode()
+        self.root = None
         # self.curr_node = None
 
     def __lt__(self, other):
         return self.last_observation_end_time < other.last_observation_end_time
-    
+
     # This should update all plans, obs times, rewards, costs
     def results(self):
         # Get best plan aka action sequence using exploitation only
-        #   aka. 1) look at all leaf nodes 2) evaluate each path's total duct exploitation ONLY reward 3) select largest total discounted reward
-        r = 0.0
-        l_i = None # This will be the index of the best leaf leading to best plan
-        for l in MCTSNode.leafs:
-            pass
+        path = MCTSNode.get_topk_paths(self.host_ind)[0]
+        print(f"Best plan for Host {self.host_ind} :\n", path)
 
         # Update: plan [states], slew start and ends, obs start and ends, cumulative rewards, cumulative costs
-        
+        self.plan = [] # THESE ARE TARGETING INDICES!!!!!
+        self.reward = []
+        self.cost = []
+        self.obs_starts = []
+        self.obs_ends = []
+        for node in path:
+            self.plan.append(node.state.state.target) # Store the target index for plotting purposes
+            self.cost.append(node.state.action.duration.total_seconds()) # Stand in - how long did we spend slewing?
+            self.reward.append(node.value / node.visits if node.visits > 0. else 0.0) # We should probably actually score based on sequential plans with target records in the mix in order to compare to greedy)
+            self.obs_starts.append(node.state.start_time + node.state.action.duration)
+            self.obs_starts.append(node.state.end_time)
 
     def as_dict(self):
         return {
             "Index": self.host_ind,
             "Name": self.host.name,
             "Plan": self.plan,
-            "StartTimes": self.obs_starts, 
+            "StartTimes": self.obs_starts,
             "EndTimes": self.obs_ends,
             "Rewards": self.reward,
             "TotalReward": float(np.sum(self.reward)),
@@ -354,6 +363,7 @@ class Observer:
                 time=t
             ),
             parent=None,
+            tree_id=self.host_ind
         )
 
 
@@ -371,7 +381,7 @@ class Observer:
 
         if self.density_maps is None:
             raise ValueError("Density maps must be computed before initializing belief.")
-        
+
         # Create list of zero arrays matching the shape of density maps
         self.local_belief_map = [np.zeros_like(m) for m in self.density_maps]
         self.extern_belief_map = [np.zeros_like(m) for m in self.density_maps]
@@ -453,7 +463,7 @@ class Observer:
                 self.extern_belief_map[i].flat[j] += np.sum(self.extern_belief[i][self.access[i][:,0]][qr])
             # Normalize!
             self.local_belief_map[i] /= self.local_belief_map[i].sum()
-            self.extern_belief_map[i] /= self.extern_belief_map[i].sum()    
+            self.extern_belief_map[i] /= self.extern_belief_map[i].sum()
     '''
     def compute_belief_maps(self):
         # Using targeting belief and density lookup, aggregate into spatial map at each time t, which will be used for action selection
@@ -470,12 +480,12 @@ class Observer:
                 self.local_belief_map[i] /= self.local_belief_map[i].sum()
             else: # Safety for all zero map
                 self.local_belief_map[i] = np.full_like(self.local_belief_map[i], 1.0 / self.local_belief_map[i].size)
-                
+
             if np.sum(self.extern_belief_map[i]) > 0:
                 self.extern_belief_map[i] /= self.extern_belief_map[i].sum()
             else: # Safety for all zero map
                 self.extern_belief_map[i] = np.full_like(self.extern_belief_map[i], 1.0 / self.extern_belief_map[i].size)
-    
+
     def optimize_belief(self, extern):
         # Extern should be list of local belief arrays
         # For each time t
@@ -516,7 +526,7 @@ class Observer:
             #print("t")
             #plt.imshow(self.density_maps[i], cmap="inferno")
             #plt.show()
-    
+
     @staticmethod
     def find_nearest(t, times):
         return np.searchsorted(times, t)
@@ -533,9 +543,9 @@ class Observer:
                 break
             node = child
             path.append(node)
-        
-        return node, path 
-    
+
+        return node, path
+
     def expand(self, node, num_children = 5):
         # Expand by creating random next states (right now I set to 5 default )
 
@@ -543,23 +553,23 @@ class Observer:
         self.mcts_check_terminal(node) # Given state associated with node, determine if end_time for the observation at that state is after planning horizon end
 
         if node.is_terminal:
-            return None # Reach terminal state 
-        
-        for a in range(num_children): # Static node width so just make num_children amount of state action pairs 
-            #next_state = np.random.randint(0,100) # SMW:  Replace this with actual state 
+            return None # Reach terminal state
+
+        for a in range(num_children): # Static node width so just make num_children amount of state action pairs
+            #next_state = np.random.randint(0,100) # SMW:  Replace this with actual state
             next_state = self.choose_action(node)
             node.add_child(a,next_state)
 
         # From the nodes we created randomly select one to work from
         return random.choice(list(node.children.values()))
 
-    # TODO: RH - WE NEED TO FIGURE OUT HOW TO EFFICIENTLY SIMULATE ROLLOUT!!!! Could look like a full greedy selection of actions, or random selection given local belief?    
+    # TODO: RH - WE NEED TO FIGURE OUT HOW TO EFFICIENTLY SIMULATE ROLLOUT!!!! Could look like a full greedy selection of actions, or random selection given local belief?
     def simulate(self,node):
         # Dummy rollout: this needs to pick random (or greedy?) actions across the remaining density maps as an approximation?
 
         if node.is_terminal:
             return 0.0
-        
+
         # Perform rollout until either we exceed the planning horizion or depth of 10
         cumulative_reward = 0.0
         curr_state_pair = node.state
@@ -586,14 +596,14 @@ class Observer:
             if t_idx < len(self.density_maps):
                 # RH: This should use the next_asp to calculate slew+observation specific reward, not density I think
                 step_reward = np.max(self.density_maps[t_idx])
-            
+
             cumulative_reward += (node.gamma ** i) * step_reward
 
             # Update state for the next iteration
             curr_state_pair = next_asp
 
         return cumulative_reward
-    
+
     def backpropagate(self, path, reward):
         # Discounted backip each step we apply a discount
         for node in reversed(path):
@@ -615,15 +625,15 @@ class Observer:
             if tmp:
                 leaf = tmp
                 path.append(leaf)
-        
+
         # 3. Simulate
         reward = self.simulate(leaf)
 
-        # 4. backpropagate 
+        # 4. backpropagate
         self.backpropagate(path, reward)
 
         # return reward
-    
+
     def mcts_check_terminal(self, node):
         # We need to check terminal nodes by end_time vs end of planning horizon
         # Set node.is_terminal = True if end_time of assigned observation is after end of planning window
@@ -633,7 +643,7 @@ class Observer:
         # Use end_time on ActionStatePair object, since that has end_time calculated via: end_time = parent.end_time + slew duration + observation duration = ActionStatePair.end_time
         if node.state.end_time > ts.from_datetime(self.planning_window_end):
             node.is_terminal = True
-    
+
     def get_best_action_sequence(self, mode="duct", k=1):
         path = []
 
@@ -721,10 +731,10 @@ class GlobalDecMCTSPlanner:
         # TODO: RH - these will likely need to be computed on-the-fly when doing rollout or choosing actions :/
         # self.target_records = np.asarray([{"last_seen": self.planning_window_start, "last_uncertainty": 1.0} for _ in targets])
 
-    # This should include belief update for our observers/local planners    
+    # This should include belief update for our observers/local planners
     def run(self, nsync=10, niter=100):
         # For number of communication rounds (aka 5 to allow convergence?), do chunk of mcts iterations
-        for _ in range(nsync):
+        for _ in tqdm(range(nsync)):
             # For each observer, start thread to run mcts search function (aka mcts_iter in loop)
             # with threadpool as tp: # pseudo code
 
@@ -733,7 +743,7 @@ class GlobalDecMCTSPlanner:
                 for i in range(niter):
                     o.mcts_iter()
                 o.compute_local_belief(self.targets)
-            '''                
+            '''
             plt.plot(range(len(self.observers[0].local_belief[0])),self.observers[0].local_belief[0], label = "Obs 1")
             plt.plot(range(len(self.observers[1].local_belief[0])),self.observers[1].local_belief[0], label = "Obs 2")
             plt.plot(range(len(self.observers[2].local_belief[0])),self.observers[2].local_belief[0], label = "Obs 3")
@@ -743,7 +753,7 @@ class GlobalDecMCTSPlanner:
             '''
             # Join threads, accumulate beliefs, update beliefs on each observer
             for o in (so:=set(self.observers)):
-                
+
                 o.optimize_belief([other.local_belief for other in (so - {o})])
                 '''
                 plt.ion()
@@ -769,7 +779,7 @@ class GlobalDecMCTSPlanner:
                 plt.title("Post Internal")
                 for y in range(len(o.local_belief)):
                     plt.imshow(o.local_belief_map[y], cmap= "inferno")
-                
+
                     plt.pause(0.25)
                     plt.cla()
                     #plt.show()
@@ -788,11 +798,13 @@ class GlobalDecMCTSPlanner:
                 # Reset trees?
 
         # RH: SAVE BEST PATHS FOR EACH OBSERVER AND SAVE ANY AND ALL METADATA LIKE BELIEF MAPS!!!!!!!!!
-        self.results = {obs: plan for obs,plan in zip(observers, [o.plan for o in observers])}
+        self.results = {}
+        for o in observers:
+            o.root.registry
+            o.results() # Updates best plan and all derivative data in place
+            self.results[o] = o.as_dict() # packages all relevant data in a meaningful way, optionally we can write out those results here ala greedy
 
-        return
-    
-    # Trigger reset across all local planners    
+    # Trigger reset across all local planners
     def reset(self):
         for o in self.observers:
             o.reset()
@@ -801,14 +813,14 @@ if __name__=="__main__":
     from datetime import datetime, timezone
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
-    sats = load_satellites(fname="tmp.json")
+    sats = load_satellites(fname="test_catalog_121225.json")
 
     import time
     start_init = time.perf_counter()
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:1000] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:100] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
@@ -824,7 +836,7 @@ if __name__=="__main__":
 
     end_planning = time.perf_counter() - start_init
     print("Elapsed planning time: ", end_planning)
-    
+
     plt.ion()
     fig, axes = plt.subplots(2, 2)
 
@@ -840,3 +852,4 @@ if __name__=="__main__":
     #plt.show()
 
     # Save results!!!
+    print(gp.results)
