@@ -151,7 +151,7 @@ class MCTSNode:
 
         # Get leafs in tree
         leafs = cls.get_all_leafs(tid)
-        print(f"LEAFS FOR TREE {tid}: ", leafs)
+        # print(f"LEAFS FOR TREE {tid}: ", leafs)
         # Get paths
         paths = [cls.get_path_from_root(n) for n in leafs]
         # Get score for root->leaf for all leafs
@@ -311,7 +311,7 @@ class Observer:
             self.cost.append(node.state.action.duration.total_seconds()) # Stand in - how long did we spend slewing?
             self.reward.append(node.value / node.visits if node.visits > 0. else 0.0) # We should probably actually score based on sequential plans with target records in the mix in order to compare to greedy)
             self.obs_starts.append(node.state.start_time + node.state.action.duration)
-            self.obs_starts.append(node.state.end_time)
+            self.obs_ends.append(node.state.end_time)
 
     def as_dict(self):
         return {
@@ -430,21 +430,24 @@ class Observer:
         # Given top-k highest value paths, bin by OBSERVATION END TIMES
 
         # RH: For now, just use the very best action sequence
-        path = self.get_best_action_sequence(mode="duct") # we'd like this to return topk sequences instead...
+        # path = self.get_best_action_sequence(mode="duct") # we'd like this to return topk sequences instead...
+        paths = MCTSNode.get_topk_paths(self.host_ind, 10)
 
         # Using subsets of observations for each time range, compute probabilities over targets by the frequency at which they show up (given state and corresponding self.density query record)
         self.local_belief = np.zeros((len(self.sample_times), len(targets)))
         utc_sample_times = [
         ts.from_datetime(dt) for dt in self.sample_times
         ]
-        for node in path:
-            nn = self.find_nearest(node.state.end_time, utc_sample_times)
-            qr = self.density[nn][node.state.state.target]
-            #self.local_belief[nn][self.access[nn][:,0]][qr] += 1 # I think here we'd also divide by the number of paths we're drawing from aka "k"
-            a = self.local_belief[nn][self.access[nn][:,0]]
-            a[qr] = a[qr] + 1
-            self.local_belief[nn][self.access[nn][:,0]] = a
-            b = self.local_belief[nn][self.access[nn][:,0]][qr]
+        for path in paths:
+            for node in path:
+                nn = self.find_nearest(node.state.end_time, utc_sample_times)
+                qr = self.density[nn][node.state.state.target]
+                #self.local_belief[nn][self.access[nn][:,0]][qr] += 1 # I think here we'd also divide by the number of paths we're drawing from aka "k"
+                a = self.local_belief[nn][self.access[nn][:,0]]
+                a[qr] = a[qr] + 1
+                self.local_belief[nn][self.access[nn][:,0]] = a
+                # b = self.local_belief[nn][self.access[nn][:,0]][qr]
+
         for lb in self.local_belief:
             # Check for rare case of zeros (might happen with non-terminal paths or finely sampled times)
             if np.isclose(s:=lb.sum(),0.0):
@@ -489,6 +492,7 @@ class Observer:
     def optimize_belief(self, extern):
         # Extern should be list of local belief arrays
         # For each time t
+        tmp = np.zeros_like(self.local_belief[0])
         for i in range(len(self.sample_times)):
             # Aggregate external beliefs (top-k targeting probability vectors)
             # Combine extern belief via product distribution and normalization
@@ -498,10 +502,11 @@ class Observer:
             self.extern_belief[i] = extern_belief
 
             # Maximize KL-Divergence of P1=local vs P2=extern
-            opt = maximize_kldiv(self.local_belief[i], extern_belief)
+            tmp[...] = self.local_belief[i].copy()
+            opt = maximize_kldiv(self.local_belief[i], extern_belief, 30)
 
             # Append to local belief vector (or index into and replace belief if times are fixed for planning)
-            self.local_belief[i] = opt
+            self.local_belief[i] = (lb := opt * tmp * 1e8 + 1.0) / lb.sum()
 
     def compute_density(self, targets):
         # This should compute all density map query records for times
@@ -546,7 +551,7 @@ class Observer:
 
         return node, path
 
-    def expand(self, node, num_children = 5):
+    def expand(self, node, num_children = 2):
         # Expand by creating random next states (right now I set to 5 default )
 
         node.check_terminal() # Check depth first
@@ -555,8 +560,7 @@ class Observer:
         if node.is_terminal:
             return None # Reach terminal state
 
-        for a in range(num_children): # Static node width so just make num_children amount of state action pairs
-            #next_state = np.random.randint(0,100) # SMW:  Replace this with actual state
+        for a in range(num_children if node.depth > 3 else 5): # Initial widening, and then smaller expansions at a time
             next_state = self.choose_action(node)
             node.add_child(a,next_state)
 
@@ -732,7 +736,7 @@ class GlobalDecMCTSPlanner:
         # self.target_records = np.asarray([{"last_seen": self.planning_window_start, "last_uncertainty": 1.0} for _ in targets])
 
     # This should include belief update for our observers/local planners
-    def run(self, nsync=10, niter=100):
+    def run(self, nsync=5, niter=1000):
         # For number of communication rounds (aka 5 to allow convergence?), do chunk of mcts iterations
         for _ in tqdm(range(nsync)):
             # For each observer, start thread to run mcts search function (aka mcts_iter in loop)
@@ -820,7 +824,7 @@ if __name__=="__main__":
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:100] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
@@ -839,6 +843,7 @@ if __name__=="__main__":
 
     plt.ion()
     fig, axes = plt.subplots(2, 2)
+    plt.title("Local Belief")
 
     for i in range(len(observers[0].sample_times)):
         axes[0][0].imshow(observers[0].local_belief_map[i], cmap="inferno")
@@ -846,10 +851,27 @@ if __name__=="__main__":
         axes[1][0].imshow(observers[2].local_belief_map[i], cmap="inferno")
         axes[1][1].imshow(observers[3].local_belief_map[i], cmap="inferno")
         plt.pause(0.5)
+        for a in axes.flat:
+            a.clear()
 
     plt.ioff()
 
-    #plt.show()
+    plt.ion()
+    fig, axes = plt.subplots(2, 2)
+    plt.title("Density")
+
+    for i in range(len(observers[0].sample_times)):
+        axes[0][0].imshow(observers[0].density_maps[i], cmap="inferno")
+        axes[0][1].imshow(observers[1].density_maps[i], cmap="inferno")
+        axes[1][0].imshow(observers[2].density_maps[i], cmap="inferno")
+        axes[1][1].imshow(observers[3].density_maps[i], cmap="inferno")
+        plt.pause(0.5)
+        for a in axes.flat:
+            a.clear()
+
+    plt.ioff()
 
     # Save results!!!
     print(gp.results)
+
+    # Write out to disk
