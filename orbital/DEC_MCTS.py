@@ -891,9 +891,25 @@ def _time_to_iso(t):
 
 if __name__=="__main__":
     from datetime import datetime, timezone
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] in ['--help','-h']:
+        print("Usage: python DEC_MCTS.py \n\t<PLANNING HORIZON (DURATION IN HOURS)> \n\t<# MCTS ITERATIONS> \n\t<# MCTS COMMUNICATION ROUNDS> \n\t<# TARGETS TO LOAD>")
+        sys.exit(0)
+
+    HORIZON=timedelta(hours=0.5) #hrs
+    NITER=100
+    NCOMM=5
+    SAT_LIMIT=1000
+
+    if len(sys.argv) > 1:
+        HORIZON=timedelta(hours=float(sys.argv[1]))
+        NITER=int(sys.argv[2])
+        NCOMM=int(sys.argv[3])
+        SAT_LIMIT=int(sys.argv[4])
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
-    sats = load_satellites(fname="tmp.json")
+    sats = load_satellites(fname="test_catalog_121225.json")
 
     import time
     start_init = time.perf_counter()
@@ -903,14 +919,14 @@ if __name__=="__main__":
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:1000] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:SAT_LIMIT] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
 
     print(f"Starting initialization... [{time.perf_counter()}]")
 
-    gp = GlobalDecMCTSPlanner(tstart) #datetime.now(timezone.utc))
+    gp = GlobalDecMCTSPlanner(tstart, plan_duration=HORIZON) #datetime.now(timezone.utc))
     gp.setup(observers, targets)
 
     end_init = time.perf_counter() - start_init
@@ -918,7 +934,7 @@ if __name__=="__main__":
 
     print(f"Starting planning... [{time.perf_counter()}]")
 
-    gp.run()
+    gp.run(NCOMM, NITER)
 
     end_planning = time.perf_counter() - start_init
     print("Elapsed planning time: ", end_planning)
@@ -953,12 +969,30 @@ if __name__=="__main__":
 
     plt.ioff()
 
+    fig, axes = plt.subplots(2, 2)
+    plt.title("Access")
+
+    axes[0][0].imshow(np.asarray(observers[0].access), cmap="inferno")
+    axes[0][1].imshow(np.asarray(observers[1].access), cmap="inferno")
+    axes[1][0].imshow(np.asarray(observers[2].access), cmap="inferno")
+    axes[1][1].imshow(np.asarray(observers[3].access), cmap="inferno")
+    for ax in axes.flat:
+        ax.set_aspect('auto') # Stretch
+
+    plt.show()
+
     # Save results!!!
-    print(gp.results)
+    #print(gp.results)
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    import os
+    os.makedirs(f"results/Dec_MCTS/{timestamp}", exist_ok=True)
+
+    with open(f"results/Dec_MCTS/{timestamp}/meta.txt") as f:
+        # Write out record of test metadata for our analysis
+        f.writelines(["DECMCTS METADATA",f"{HORIZON=}",f"{NITER=}",f"{NCOMM=}",f"{SAT_LIMIT=}"])
 
     for o in observers:
-        o.save(f"observer_{o.host_ind}_results.json")
-        o.save_arrays(f"observer_{o.host_ind}_arrays.npz")
+        o.save(f"results/Dec_MCTS/{timestamp}/observer_{o.host_ind}_results.json")
+        o.save_arrays(f"results/Dec_MCTS/{timestamp}/observer_{o.host_ind}_arrays.npz")
 
-
-    # Write out to disk

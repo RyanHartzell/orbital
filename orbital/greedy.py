@@ -79,7 +79,7 @@ def global_argmax(arr, thresh=None):
         return np.where(arr > (thresh * arr.max()))
 
 # GREEDY OBS PLANNER
-def greedy_obs_plan_gen(observers, time_window_start, time_window_end):
+def greedy_obs_plan_gen(observers, time_window_start, time_window_end, epsilon=0.8):
     # For each action, FOR EACH SENSOR, choose the highest value, lowest cost observation to make. Uses global armax with associated values and costs and then lexicographically sorts by value then by cost
     observers = observers.copy()
     final = []
@@ -108,7 +108,7 @@ def greedy_obs_plan_gen(observers, time_window_start, time_window_end):
 
                 # Observer data should be updated at the end of this (reward, cost, new state, last observation end time)
                 # TargetRecords should be updated at the end of this function as well (last seen time, last uncertainty)
-                execute_greedy_step(o, targets, target_records)
+                execute_greedy_step(o, targets, target_records, epsilon)
 
                 if o.last_observation_end_time > time_window_end:     
                     final.append(observers.pop(i))
@@ -186,7 +186,7 @@ def init_greedy(o, targets):
 
 
 # We just assume the slew is part of the observation since we already have the asumption that none of these targets are moving faster than a field of view during observation, and slew time is negligible
-def execute_greedy_step(o, targets, target_records, stochastic=False):
+def execute_greedy_step(o, targets, target_records, stochastic=False, epsilon=0.8):
     t = o.last_observation_end_time
     host = o.host
 
@@ -228,7 +228,7 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
         
         # This might be causing a slowdown (unnecessary reshape and flattening)
         value_map = value_map.reshape(density_map.shape)
-        new_state_index = np.ravel_multi_index(global_argmax(value_map, 0.8), value_map.shape) # This is the set of all "best" move options above some threshold
+        new_state_index = np.ravel_multi_index(global_argmax(value_map, epsilon), value_map.shape) # This is the set of all "best" move options above some threshold
 
         if stochastic:
             # Choose using density as PDF?
@@ -272,14 +272,32 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
 
 if __name__=="__main__":
     from datetime import datetime, timedelta
-    sats = load_satellites(fname="tmp.json")
+
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] in ['--help','-h']:
+        print("Usage: python greedy.py \n\t<PLANNING HORIZON (DURATION IN HOURS> \n\t<# TARGETS TO LOAD> \n\t<EPSILON>")
+        sys.exit(0)
+
+    HORIZON=timedelta(hours=0.5) #hrs
+    SAT_LIMIT=None # Ensures slice gets everything
+    EPSILON=0.8 # Default e-greedy is 80%
+
+    if len(sys.argv) > 1:
+        HORIZON=timedelta(hours=float(sys.argv[1]))
+        SAT_LIMIT=int(sys.argv[2])
+        EPSILON=float(sys.argv[3])
+        if EPSILON < 0.0 or EPSILON >= 1.0:
+            raise ValueError("EPSILON MUST BE BETWEEN 0.0 AND 0.99999!")
+
+    sats = load_satellites(fname="test_catalog_121225.json")
 
     import time
     start = time.perf_counter()
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:SAT_LIMIT] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Get times
     ts = load.timescale()
@@ -288,7 +306,7 @@ if __name__=="__main__":
     dt = datetime(2025, 12, 13, 12, 0, 0, tzinfo=utc) # KEEP FIXED FOR TESTING!!!!!!!!
     tstart = ts.from_datetime(dt)
 
-    tend = tstart + timedelta(minutes=10) # Our time window is 5 minutes long to start
+    tend = tstart + HORIZON #timedelta(minutes=10) # Our time window is 5 minutes long to start
     # times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
 
     print("START_TIME        : ", tstart.utc_iso())
@@ -297,7 +315,7 @@ if __name__=="__main__":
 
     observers = [Observer(h, i) for i,h in enumerate(hosts)]
 
-    opt = greedy_obs_plan_gen(observers, tstart, tend)
+    opt = greedy_obs_plan_gen(observers, tstart, tend, EPSILON)
 
     # print(opt)
 
@@ -305,12 +323,16 @@ if __name__=="__main__":
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
     import os
-    os.makedirs(f"results/{timestamp}", exist_ok=True)
+    os.makedirs(f"results/Greedy/{timestamp}", exist_ok=True)
+    
+    with open(f"results/Greedy/{timestamp}/meta.txt") as f:
+        # Write out record of test metadata for our analysis
+        f.writelines(["GREEDY METADATA",f"{HORIZON=}",f"{SAT_LIMIT=}",f"{EPSILON=}"])
 
     for o in opt:
         # print(o.as_dict())
-        o.save(f"results/{timestamp}/HostID{o.host_ind}.json")
-        o.save_maps(f"results/{timestamp}/HostID{o.host_ind}_value_map.npz")
+        o.save(f"results/Greedy/{timestamp}/HostID{o.host_ind}.json")
+        o.save_maps(f"results/Greedy/{timestamp}/HostID{o.host_ind}_value_map.npz")
 
     # Try plotting? Need to modify the animate heatmaps dude from density such that it can take an equal length array of observation (RA,DEC) values...
 
