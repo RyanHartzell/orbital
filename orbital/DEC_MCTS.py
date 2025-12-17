@@ -941,8 +941,8 @@ if __name__=="__main__":
 
     gp.run(NCOMM, NITER)
 
-    end_planning = time.perf_counter() - start_init
-    print("Elapsed planning time: ", end_planning)
+    elapsed = time.perf_counter() - start_init
+    print("Elapsed planning time: ", elapsed)
 
     # plt.ion()
     # fig, axes = plt.subplots(2, 2)
@@ -995,7 +995,7 @@ if __name__=="__main__":
 
     with open(f"results/Dec_MCTS/{timestamp}/meta.txt", 'w') as f:
         # Write out record of test metadata for our analysis
-        f.writelines(["DECMCTS METADATA",f"{HORIZON=}",f"{NITER=}",f"{NCOMM=}",f"{SAT_LIMIT=}"])
+        f.writelines(["DECMCTS METADATA\n",f"SIM_TIME={elapsed}\n",f"{HORIZON=}\n",f"{NITER=}\n",f"{NCOMM=}\n",f"{SAT_LIMIT=}\n"])
 
     for o in observers:
         o.save(f"results/Dec_MCTS/{timestamp}/observer_{o.host_ind}_results.json")

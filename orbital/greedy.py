@@ -319,6 +319,8 @@ if __name__=="__main__":
 
     # print(opt)
 
+    elapsed = time.perf_counter() - start
+
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
 
@@ -327,7 +329,7 @@ if __name__=="__main__":
     
     with open(f"results/Greedy/{timestamp}/meta.txt") as f:
         # Write out record of test metadata for our analysis
-        f.writelines(["GREEDY METADATA",f"{HORIZON=}",f"{SAT_LIMIT=}",f"{EPSILON=}"])
+        f.writelines(["GREEDY METADATA\n",f"SIM_TIME={elapsed}\n", f"{HORIZON=}\n",f"{SAT_LIMIT=}\n",f"{EPSILON=}\n"])
 
     for o in opt:
         # print(o.as_dict())
@@ -336,5 +338,4 @@ if __name__=="__main__":
 
     # Try plotting? Need to modify the animate heatmaps dude from density such that it can take an equal length array of observation (RA,DEC) values...
 
-    elapsed = time.perf_counter() - start
     print(f"Simulated observation planning took {elapsed} [s] to complete a plan for {len(hosts)} hosts spanning {tstart.utc_iso()} to {tend.utc_iso()}.")
