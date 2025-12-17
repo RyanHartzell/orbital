@@ -506,6 +506,10 @@ class Observer:
             for j,qr in enumerate(self.density[i]):
                 self.local_belief_map[i].flat[j] += np.sum(self.local_belief[i][self.access[i][:,0]][qr])
                 self.extern_belief_map[i].flat[j] += np.sum(self.extern_belief[i][self.access[i][:,0]][qr])
+
+            # Try multiplying through by density after accumulating sampling-based belief. We want where both are high?
+            self.local_belief_map[i] *= self.density_maps[i]
+
             # Normalize!
             if np.sum(self.local_belief_map[i]) > 0:
                 self.local_belief_map[i] /= self.local_belief_map[i].sum()
@@ -536,10 +540,11 @@ class Observer:
             self.extern_belief[i] = extern_belief
 
             # Maximize KL-Divergence of P1=local vs P2=extern
-            tmp[...] = self.local_belief[i].copy()
-            opt = maximize_kldiv(self.local_belief[i], extern_belief, 30)
+            # tmp = self.local_belief[i].copy()
+            opt = maximize_kldiv(self.local_belief[i], extern_belief, 10)
 
-            numerator = (opt * tmp * 1e8) + 1.0    
+            numerator = (opt * 1e8) + 1.0
+            # numerator = (opt * tmp * 1e8) + 1.0    
             # clamp
             if not np.all(np.isfinite(numerator)):
                 numerator = np.nan_to_num(numerator, nan=1.0, posinf=np.finfo(float).max, neginf=0.0)
@@ -939,47 +944,47 @@ if __name__=="__main__":
     end_planning = time.perf_counter() - start_init
     print("Elapsed planning time: ", end_planning)
 
-    plt.ion()
-    fig, axes = plt.subplots(2, 2)
-    plt.title("Local Belief")
+    # plt.ion()
+    # fig, axes = plt.subplots(2, 2)
+    # plt.title("Local Belief")
 
-    for i in range(len(observers[0].sample_times)):
-        axes[0][0].imshow(observers[0].local_belief_map[i], cmap="inferno")
-        axes[0][1].imshow(observers[1].local_belief_map[i], cmap="inferno")
-        axes[1][0].imshow(observers[2].local_belief_map[i], cmap="inferno")
-        axes[1][1].imshow(observers[3].local_belief_map[i], cmap="inferno")
-        plt.pause(0.5)
-        for a in axes.flat:
-            a.clear()
+    # for i in range(len(observers[0].sample_times)):
+    #     axes[0][0].imshow(observers[0].local_belief_map[i], cmap="inferno")
+    #     axes[0][1].imshow(observers[1].local_belief_map[i], cmap="inferno")
+    #     axes[1][0].imshow(observers[2].local_belief_map[i], cmap="inferno")
+    #     axes[1][1].imshow(observers[3].local_belief_map[i], cmap="inferno")
+    #     plt.pause(0.5)
+    #     for a in axes.flat:
+    #         a.clear()
 
-    plt.ioff()
+    # plt.ioff()
 
-    plt.ion()
-    fig, axes = plt.subplots(2, 2)
-    plt.title("Density")
+    # plt.ion()
+    # fig, axes = plt.subplots(2, 2)
+    # plt.title("Density")
 
-    for i in range(len(observers[0].sample_times)):
-        axes[0][0].imshow(observers[0].density_maps[i], cmap="inferno")
-        axes[0][1].imshow(observers[1].density_maps[i], cmap="inferno")
-        axes[1][0].imshow(observers[2].density_maps[i], cmap="inferno")
-        axes[1][1].imshow(observers[3].density_maps[i], cmap="inferno")
-        plt.pause(0.5)
-        for a in axes.flat:
-            a.clear()
+    # for i in range(len(observers[0].sample_times)):
+    #     axes[0][0].imshow(observers[0].density_maps[i], cmap="inferno")
+    #     axes[0][1].imshow(observers[1].density_maps[i], cmap="inferno")
+    #     axes[1][0].imshow(observers[2].density_maps[i], cmap="inferno")
+    #     axes[1][1].imshow(observers[3].density_maps[i], cmap="inferno")
+    #     plt.pause(0.5)
+    #     for a in axes.flat:
+    #         a.clear()
 
-    plt.ioff()
+    # plt.ioff()
 
-    fig, axes = plt.subplots(2, 2)
-    plt.title("Access")
+    # fig, axes = plt.subplots(2, 2)
+    # plt.title("Access")
 
-    axes[0][0].imshow(np.asarray(observers[0].access), cmap="inferno")
-    axes[0][1].imshow(np.asarray(observers[1].access), cmap="inferno")
-    axes[1][0].imshow(np.asarray(observers[2].access), cmap="inferno")
-    axes[1][1].imshow(np.asarray(observers[3].access), cmap="inferno")
-    for ax in axes.flat:
-        ax.set_aspect('auto') # Stretch
+    # axes[0][0].imshow(np.asarray(observers[0].access), cmap="inferno")
+    # axes[0][1].imshow(np.asarray(observers[1].access), cmap="inferno")
+    # axes[1][0].imshow(np.asarray(observers[2].access), cmap="inferno")
+    # axes[1][1].imshow(np.asarray(observers[3].access), cmap="inferno")
+    # for ax in axes.flat:
+    #     ax.set_aspect('auto') # Stretch
 
-    plt.show()
+    # plt.show()
 
     # Save results!!!
     #print(gp.results)
@@ -988,7 +993,7 @@ if __name__=="__main__":
     import os
     os.makedirs(f"results/Dec_MCTS/{timestamp}", exist_ok=True)
 
-    with open(f"results/Dec_MCTS/{timestamp}/meta.txt") as f:
+    with open(f"results/Dec_MCTS/{timestamp}/meta.txt", 'w') as f:
         # Write out record of test metadata for our analysis
         f.writelines(["DECMCTS METADATA",f"{HORIZON=}",f"{NITER=}",f"{NCOMM=}",f"{SAT_LIMIT=}"])
 
