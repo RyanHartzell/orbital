@@ -8,7 +8,7 @@ import numpy as np
 # from skimage.filters import peak_local_max 
 from datetime import timedelta
 from astropy import units as u
-from skyfield.api import load
+from skyfield.api import load, utc
 import json
 import warnings
 import tqdm
@@ -271,7 +271,8 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
         tr["last_seen"] = o.last_observation_end_time
 
 if __name__=="__main__":
-    sats = load_satellites()
+    from datetime import datetime, timedelta
+    sats = load_satellites(fname="test_catalog_121225.json")
 
     import time
     start = time.perf_counter()
@@ -282,7 +283,11 @@ if __name__=="__main__":
 
     # Get times
     ts = load.timescale()
-    tstart = ts.now()
+
+    # tstart = ts.now()
+    dt = datetime(2025, 12, 13, 12, 0, 0, tzinfo=utc) # KEEP FIXED FOR TESTING!!!!!!!!
+    tstart = ts.from_datetime(dt)
+
     tend = tstart + timedelta(minutes=10) # Our time window is 5 minutes long to start
     # times = ts.utc(t0.utc_datetime() + np.asarray([timedelta(minutes=x) for x in range(0, 361)])) # 360 minute (6 hour) timeframe
 

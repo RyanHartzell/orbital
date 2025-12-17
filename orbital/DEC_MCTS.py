@@ -6,7 +6,7 @@ import numpy as np
 # from skimage.filters import peak_local_max
 from datetime import datetime, timedelta, timezone
 from astropy import units as u
-from skyfield.api import load
+from skyfield.api import load, utc
 import json
 import warnings
 import math
@@ -804,9 +804,9 @@ class GlobalDecMCTSPlanner:
         # RH: SAVE BEST PATHS FOR EACH OBSERVER AND SAVE ANY AND ALL METADATA LIKE BELIEF MAPS!!!!!!!!!
         self.results = {}
         for o in observers:
-            o.root.registry
+            # o.root.registry
             o.results() # Updates best plan and all derivative data in place
-            self.results[o] = o.as_dict() # packages all relevant data in a meaningful way, optionally we can write out those results here ala greedy
+            self.results[o.host_ind] = o.as_dict() # packages all relevant data in a meaningful way, optionally we can write out those results here ala greedy
 
     # Trigger reset across all local planners
     def reset(self):
@@ -822,6 +822,9 @@ if __name__=="__main__":
     import time
     start_init = time.perf_counter()
 
+    tstart = datetime(2025, 12, 13, 12, 0, 0, tzinfo=utc) # KEEP FIXED FOR TESTING!!!!!!!!
+    # tstart = ts.from_datetime(dt)
+
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
     targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
@@ -830,12 +833,15 @@ if __name__=="__main__":
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]
 
     print(f"Starting initialization... [{time.perf_counter()}]")
-    gp = GlobalDecMCTSPlanner(datetime.now(timezone.utc))
+
+    gp = GlobalDecMCTSPlanner(tstart) #datetime.now(timezone.utc))
     gp.setup(observers, targets)
+
     end_init = time.perf_counter() - start_init
     print("Elapsed init time: ", end_init)
 
     print(f"Starting planning... [{time.perf_counter()}]")
+
     gp.run()
 
     end_planning = time.perf_counter() - start_init
