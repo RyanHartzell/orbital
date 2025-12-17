@@ -24,6 +24,7 @@ np.random.seed(42) # We'll want to comment out once done debugging
 
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
+DEFAULT_RESET_UNCERTAINTY = 0.1 # km
 MAX_DEPTH = 100 # SMW : Adjust plannign horizion
 
 ts = load.timescale()
@@ -242,8 +243,12 @@ class Observation:
 
     @classmethod
     def random_sample(cls, target):
-        integration_and_readout = np.random.uniform(0.01, 5) #100fps is floor
-        exposures = np.ceil(np.random.uniform(3, 17))
+        # integration_and_readout = np.random.uniform(0.01, 5) #100fps is floor
+        # exposures = np.ceil(np.random.uniform(3, 17))
+
+        # Change to match greedy
+        integration_and_readout = 1.0
+        exposures = 7
         return cls(target, integration_and_readout, exposures)
 
 class Slew:
@@ -287,6 +292,9 @@ class Observer:
         self.access = None
         self.density = None
         self.density_maps = None
+
+        # Init target records
+        self.target_records = None
 
         self.root = None
         # self.curr_node = None
@@ -370,6 +378,7 @@ class Observer:
     ######################################################################
     # Beginning of Dec-MCTS implementation
     def init_belief(self, targets):
+        self.target_records = np.asarray([{"last_seen": ts.from_datetime(self.planning_window_start), "last_uncertainty": 1.0} for _ in targets])
 
         num_times = len(self.sample_times)
         num_targets = len(targets)
@@ -535,8 +544,23 @@ class Observer:
     @staticmethod
     def find_nearest(t, times):
         return np.searchsorted(times, t)
+    
+    def build_target_records_at_node(self, node, times):
+        # Returns cumulative target records at a given node, consisting of last_seen and last_uncertainty (which is currently always 0.1, but is a placeholder for proper kalman update simulation)
+        target_records = self.target_records.copy()
 
-    # SMW added functions for selecting/expanding tree
+        # For each node, get state.state.target idx, and get nearest neighbor from state.end_time, then query density for target indices, and update last_seen_time to end_time 
+        path = MCTSNode.get_path_from_root(node)
+        for n in path:
+            nn = self.find_nearest(n.state.start_time, times)
+            qr = self.density[nn][n.state.state.target]
+            for tr in target_records[self.access[nn][:,0]][qr]:
+                tr["last_uncertainty"] = DEFAULT_RESET_UNCERTAINTY
+                tr["last_seen"] = n.state.end_time
+
+        return target_records
+
+   # SMW added functions for selecting/expanding tree
     def select_node(self):
         # So traverse the tree using DUCT until we reach a leaf node
         node = self.root
@@ -569,10 +593,15 @@ class Observer:
 
     # TODO: RH - WE NEED TO FIGURE OUT HOW TO EFFICIENTLY SIMULATE ROLLOUT!!!! Could look like a full greedy selection of actions, or random selection given local belief?
     def simulate(self,node):
-        # Dummy rollout: this needs to pick random (or greedy?) actions across the remaining density maps as an approximation?
-
         if node.is_terminal:
             return 0.0
+
+        # Set up target records given path above node:
+        # Fill target records tmp dict and then access via get with default values: ["last_seen_time"] = self.planning_window_start ; ["last_uncertainty"] = 0.1
+        utc_sample_times = [
+        ts.from_datetime(dt) for dt in self.sample_times
+        ]
+        target_records = self.build_target_records_at_node(node, utc_sample_times)
 
         # Perform rollout until either we exceed the planning horizion or depth of 10
         cumulative_reward = 0.0
@@ -590,21 +619,28 @@ class Observer:
             )
             # Choose action based on the temp node
             next_asp = self.choose_action(tmp_node)
-
-            # RH: TODO! USE OUR REWARD FUNCTION FROM UP TOP HERE!!!!!!!
-            utc_sample_times = [
-            ts.from_datetime(dt) for dt in self.sample_times
-            ]
             t_idx = self.find_nearest(next_asp.start_time, utc_sample_times)
-            step_reward = 0.0
-            if t_idx < len(self.density_maps):
+
+            # step_reward = 0.0
+            # if t_idx < len(self.density_maps):
                 # RH: This should use the next_asp to calculate slew+observation specific reward, not density I think
-                step_reward = np.max(self.density_maps[t_idx])
+                # step_reward = np.max(self.density_maps[t_idx])
+
+            # Use t_idx and next_asp.target to look up density query records
+            qr = self.density[t_idx][next_asp.state.target]
+
+            # For idx in query records compute reward using same syntax as greedy_step from greedy module
+            step_reward = compute_reward(next_asp.start_time, target_records, self.access[t_idx], qr)
 
             cumulative_reward += (node.gamma ** i) * step_reward
 
             # Update state for the next iteration
             curr_state_pair = next_asp
+
+            # Update target records for next pass (conditional on past observations!)
+            for tr in target_records[self.access[t_idx][:,0]][qr]:
+                tr["last_uncertainty"] = DEFAULT_RESET_UNCERTAINTY
+                tr["last_seen"] = curr_state_pair.end_time
 
         return cumulative_reward
 
@@ -736,7 +772,7 @@ class GlobalDecMCTSPlanner:
         # self.target_records = np.asarray([{"last_seen": self.planning_window_start, "last_uncertainty": 1.0} for _ in targets])
 
     # This should include belief update for our observers/local planners
-    def run(self, nsync=5, niter=1000):
+    def run(self, nsync=5, niter=100):
         # For number of communication rounds (aka 5 to allow convergence?), do chunk of mcts iterations
         for _ in tqdm(range(nsync)):
             # For each observer, start thread to run mcts search function (aka mcts_iter in loop)
@@ -827,7 +863,7 @@ if __name__=="__main__":
 
     # Select a set of hosts and make targets a view of the rest of the stuff in that list of satellites
     hosts = sats[0:4]
-    targets = sats[4:] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
+    targets = sats[4:1000] # Technically this is incorrect, as each telescope should look at the other hosts too!!!
 
     # Set up global planner
     observers = [Observer(h, hi) for hi,h in enumerate(hosts)]

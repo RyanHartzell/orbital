@@ -12,13 +12,13 @@ from skyfield.api import load, utc
 import json
 import warnings
 import tqdm
-
 import multiprocessing
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # Constants
 WORST_CASE_SLEW_PER_ACTION = np.pi
+DEFAULT_RESET_UNCERTAINTY = 0.1 # km
 
 class Observer:
     def __init__(self, host, host_ind):
@@ -140,7 +140,7 @@ def compute_reward(t, target_records, access, query_result, max_allowable_unseen
         dt = timedelta(seconds=(t - tr["last_seen"])) # Timedelta, which I believe is evaluated as seconds
 
         # 0.1 km is the default reset value for uncertainty
-        reward += (update_uncertainty(tr["last_uncertainty"], dt) - 0.1 + 10*(dt > max_allowable_unseen))
+        reward += (update_uncertainty(tr["last_uncertainty"], dt) - DEFAULT_RESET_UNCERTAINTY + 10*(dt > max_allowable_unseen))
 
     return reward
 
@@ -267,7 +267,7 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
     # For each target, update our global target record with last seen time and updated uncertainty!!!
     for tr in target_records[access[:,0]][query_results[new_state_index]]:
         # tr["last_uncertainty"] = update_uncertainty(tr["last_uncertainty"], timedelta(seconds=(t - tr["last_seen"])))
-        tr["last_uncertainty"] = 0.1
+        tr["last_uncertainty"] = DEFAULT_RESET_UNCERTAINTY
         tr["last_seen"] = o.last_observation_end_time
 
 if __name__=="__main__":
