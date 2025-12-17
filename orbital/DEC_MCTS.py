@@ -17,6 +17,7 @@ import copy
 import matplotlib.pyplot as plt
 from itertools import chain
 from tqdm import tqdm
+from skyfield.timelib import Time as SkyfieldTime
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -321,26 +322,44 @@ class Observer:
             self.obs_starts.append(node.state.start_time + node.state.action.duration)
             self.obs_ends.append(node.state.end_time)
 
+
     def as_dict(self):
         return {
-            "Index": self.host_ind,
+            "Index": int(self.host_ind),
             "Name": self.host.name,
-            "Plan": self.plan,
-            "StartTimes": self.obs_starts,
-            "EndTimes": self.obs_ends,
-            "Rewards": self.reward,
+            "Plan": list(map(int, self.plan)),
+            "StartTimes": [_time_to_iso(t) for t in self.obs_starts],
+            "EndTimes": [_time_to_iso(t) for t in self.obs_ends],
+            "Rewards": [float(r) for r in self.reward],
+            "Costs": [float(c) for c in self.cost],
             "TotalReward": float(np.sum(self.reward)),
-            "Costs": self.cost,
-            "TotalCost": float(np.sum(self.cost))
+            "TotalCost": float(np.sum(self.cost)),
+            "PlanningWindow": {
+                "start": _time_to_iso(self.planning_window_start),
+                "end": _time_to_iso(self.planning_window_end)
+            }
         }
 
+
     def save(self, fname):
-        # This should save to disk whatever Observer data we want as a pandas dataframe CSV maybe?
-        with open(fname, 'w') as f:
-            f.write(json.dumps(self.as_dict())) # TAKE CARE CONVERTING NUMPY TYPES TO JSON!!! Must be raw python types for base serializer to work
+        with open(fname, "w") as f:
+            json.dump(self.as_dict(), f, indent=2)
+
 
     def save_maps(self, fname):
         np.savez(fname, np.dstack(self.maps))
+
+    def save_arrays(self, fname):
+        np.savez_compressed(
+            fname,
+            local_belief=self.local_belief,
+            extern_belief=self.extern_belief,
+            local_belief_map=np.array(self.local_belief_map),
+            extern_belief_map=np.array(self.extern_belief_map),
+            density_maps=np.array(self.density_maps),
+            access=np.array(self.access, dtype=object)
+        )
+
 
     ######################################################################
     # Greedy helpers (rollout/simulation, init)
@@ -507,15 +526,31 @@ class Observer:
             # Combine extern belief via product distribution and normalization
             extern_belief = reduce(np.multiply, [arr[i] for arr in extern])
             extern_belief[extern_belief < 0] = 0.0 # clip
-            extern_belief = extern_belief / extern_belief.sum() # normalize
+            # Normalize 
+            s = extern_belief.sum()
+            if s == 0 or not np.isfinite(s):
+                extern_belief[:] = 1.0 / extern_belief.size
+            else:
+                extern_belief /= s
+
             self.extern_belief[i] = extern_belief
 
             # Maximize KL-Divergence of P1=local vs P2=extern
             tmp[...] = self.local_belief[i].copy()
             opt = maximize_kldiv(self.local_belief[i], extern_belief, 30)
 
-            # Append to local belief vector (or index into and replace belief if times are fixed for planning)
-            self.local_belief[i] = (lb := opt * tmp * 1e8 + 1.0) / lb.sum()
+            numerator = (opt * tmp * 1e8) + 1.0    
+            # clamp
+            if not np.all(np.isfinite(numerator)):
+                numerator = np.nan_to_num(numerator, nan=1.0, posinf=np.finfo(float).max, neginf=0.0)
+
+            # Normalize
+            denom = numerator.sum()  
+            if denom == 0 or not np.isfinite(denom):
+                # Fallback to uniform distribution if broke
+                self.local_belief[i] = np.ones_like(numerator) / numerator.size
+            else:
+                self.local_belief[i] = numerator / denom
 
     def compute_density(self, targets):
         # This should compute all density map query records for times
@@ -607,7 +642,7 @@ class Observer:
         cumulative_reward = 0.0
         curr_state_pair = node.state
         rollout_depth = 0
-        max_rollout_depth = 10
+        max_rollout_depth = 50
 
         for i in range(max_rollout_depth):
             if curr_state_pair.end_time.tt >= ts.from_datetime(self.planning_window_end).tt:
@@ -849,11 +884,16 @@ class GlobalDecMCTSPlanner:
         for o in self.observers:
             o.reset()
 
+def _time_to_iso(t):
+        if isinstance(t, SkyfieldTime):
+            return t.utc_datetime().isoformat()
+        return t.isoformat()
+
 if __name__=="__main__":
     from datetime import datetime, timezone
 
     # Change this to load from a text file on disk instead of download, and set start time to the time in metadata.txt
-    sats = load_satellites(fname="test_catalog_121225.json")
+    sats = load_satellites(fname="tmp.json")
 
     import time
     start_init = time.perf_counter()
@@ -915,5 +955,10 @@ if __name__=="__main__":
 
     # Save results!!!
     print(gp.results)
+
+    for o in observers:
+        o.save(f"observer_{o.host_ind}_results.json")
+        o.save_arrays(f"observer_{o.host_ind}_arrays.npz")
+
 
     # Write out to disk

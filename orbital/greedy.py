@@ -272,7 +272,7 @@ def execute_greedy_step(o, targets, target_records, stochastic=False):
 
 if __name__=="__main__":
     from datetime import datetime, timedelta
-    sats = load_satellites(fname="test_catalog_121225.json")
+    sats = load_satellites(fname="tmp.json")
 
     import time
     start = time.perf_counter()
